@@ -135,12 +135,17 @@ fn the_extension_shows_the_menu_in_nautilus() {
         data_home: dir.join("data"),
         data_dirs: Vec::new(),
         nautilus_extensions: vec![extensions],
+        config_home: dir.join("config"),
+        config_dirs: Vec::new(),
     };
     let report = linux::install(&menu, &dirs).unwrap();
     // With the native extension there, Nautilus gets no scripts and no
     // Python extension.
-    for p in &report.written {
-        let p = p.strip_prefix(&dirs.data_home).unwrap();
+    for p in report
+        .written
+        .iter()
+        .filter_map(|p| p.strip_prefix(&dirs.data_home).ok())
+    {
         assert!(
             !p.starts_with("nautilus") && !p.starts_with("nautilus-python"),
             "{p:?}"
@@ -200,6 +205,8 @@ fn a_changed_menu_shows_at_once() {
         data_home: dir.join("data"),
         data_dirs: Vec::new(),
         nautilus_extensions: vec![extensions],
+        config_home: dir.join("config"),
+        config_dirs: Vec::new(),
     };
     let show = |menu: &Menu| {
         linux::install(menu, &dirs).unwrap();
