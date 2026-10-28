@@ -1,19 +1,59 @@
-//! Nautilus (GNOME Files). With nautilus-python installed, an extension
-//! puts the items in the menu itself, for the files they apply to. Without
-//! it, the only way in is a script per item in Nautilus's Scripts submenu,
-//! which shows for every file chosen.
+//! Nautilus (GNOME Files), the best of three ways the system offers:
+//!
+//! - **Native**: the app's package put the native extension, built by the
+//!   context-menu-nautilus crate, in Nautilus's extension folder, named
+//!   after the menu ([`native_name`]). It reads the menu's definition when
+//!   Nautilus asks, so nothing more is written here.
+//! - **Python**: nautilus-python is installed: a Python extension puts the
+//!   items in the menu itself, for the files they apply to.
+//! - **Scripts**: a script per item in Nautilus's Scripts submenu, which
+//!   shows for every file chosen.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use super::quote::{python, python_list, shell};
 use super::{Dirs, File, list, mark};
-use crate::{Count, Error, Files, Item, Menu, Report};
+use crate::{Count, Error, Files, Item, Menu};
 
-/// Where nautilus-python's library may be: Debian's multiarch folders,
-/// Fedora's `lib64`, Arch's `lib`.
-pub(super) fn has_python() -> bool {
-    let tail = "nautilus/extensions-4/libnautilus-python.so";
+/// How Nautilus gets a menu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Way {
+    /// The menu's own native extension.
+    Native,
+    /// A Python extension, through nautilus-python.
+    Python,
+    /// Scripts in the Scripts submenu.
+    Scripts,
+}
+
+impl Way {
+    /// The way for the menu `id` under `dirs`.
+    pub fn of(id: &str, dirs: &Dirs) -> Way {
+        let has = |name: &str| {
+            dirs.nautilus_extensions
+                .iter()
+                .any(|d| d.join(name).exists())
+        };
+        if has(&native_name(id)) {
+            Way::Native
+        } else if has("libnautilus-python.so") {
+            Way::Python
+        } else {
+            Way::Scripts
+        }
+    }
+}
+
+/// The file name the native extension has for the menu `id`, in Nautilus's
+/// extension folder; it serves the menu its name gives.
+pub fn native_name(id: &str) -> String {
+    format!("libcontext-menu-{id}.so")
+}
+
+/// Where Nautilus may load native extensions from: Debian's multiarch
+/// folders, Fedora's `lib64`, Arch's `lib`; those there are.
+pub(super) fn extension_dirs() -> Vec<PathBuf> {
     let mut libs = vec![PathBuf::from("/usr/lib64"), PathBuf::from("/usr/lib")];
     if let Ok(entries) = std::fs::read_dir("/usr/lib") {
         libs.extend(
@@ -23,10 +63,13 @@ pub(super) fn has_python() -> bool {
                 .filter(|p| p.to_string_lossy().contains("-linux-")),
         );
     }
-    libs.iter().any(|l| l.join(tail).exists())
+    libs.into_iter()
+        .map(|l| l.join("nautilus/extensions-4"))
+        .filter(|d| d.is_dir())
+        .collect()
 }
 
-fn extensions_dir(dirs: &Dirs) -> PathBuf {
+fn python_dir(dirs: &Dirs) -> PathBuf {
     dirs.data_home.join("nautilus-python/extensions")
 }
 
@@ -34,91 +77,106 @@ fn scripts_dir(dirs: &Dirs) -> PathBuf {
     dirs.data_home.join("nautilus/scripts")
 }
 
-/// The extension's module name: ids hold `-`, which Python names cannot.
+/// The Python extension's module name: ids hold `-`, which Python names
+/// cannot.
 fn module(id: &str) -> String {
     format!("{}_context_menu", id.replace('-', "_"))
 }
 
 pub(super) fn files(menu: &Menu, dirs: &Dirs, out: &mut Vec<File>, notes: &mut Vec<String>) {
-    if dirs.nautilus_python {
-        out.push(File {
-            path: extensions_dir(dirs).join(format!("{}.py", module(&menu.id))),
-            text: extension(menu),
-            executable: false,
-        });
-        notes.push("Nautilus: restart it (nautilus -q) for the menu to show.".into());
-        return;
-    }
-    let mut folder = scripts_dir(dirs);
-    if menu.submenu {
-        folder.push(file_name(&menu.title));
-    }
-    let mut taken: Vec<String> = Vec::new();
-    for item in &menu.items {
-        let mut name = file_name(&item.label);
-        if taken.contains(&name) {
-            name = file_name(&format!("{} ({})", item.label, item.id));
+    match Way::of(&menu.id, dirs) {
+        Way::Native => {}
+        Way::Python => {
+            out.push(File {
+                path: python_dir(dirs).join(format!("{}.py", module(&menu.id))),
+                text: extension(menu),
+                executable: false,
+            });
+            notes.push("Nautilus: restart it (nautilus -q) for the menu to show.".into());
         }
-        taken.push(name.clone());
-        out.push(File {
-            path: folder.join(&name),
-            text: script(menu, item),
-            executable: true,
-        });
+        Way::Scripts => {
+            let mut folder = scripts_dir(dirs);
+            if menu.submenu {
+                folder.push(file_name(&menu.title));
+            }
+            let mut taken: Vec<String> = Vec::new();
+            for item in &menu.items {
+                let mut name = file_name(&item.label);
+                if taken.contains(&name) {
+                    name = file_name(&format!("{} ({})", item.label, item.id));
+                }
+                taken.push(name.clone());
+                out.push(File {
+                    path: folder.join(&name),
+                    text: script(menu, item),
+                    executable: true,
+                });
+            }
+            notes.push(
+                "Nautilus: the items are in its Scripts submenu, for any file chosen. With \
+                 nautilus-python installed (python3-nautilus, nautilus-python), or the app's \
+                 package putting in the native extension, they show in the menu itself."
+                    .into(),
+            );
+        }
     }
-    notes.push(
-        "Nautilus: without nautilus-python the items are in the Scripts submenu, for any \
-         file chosen; with it (python3-nautilus, nautilus-python) they show in the menu itself."
-            .into(),
-    );
 }
 
-pub(super) fn remove(id: &str, dirs: &Dirs, report: &mut Report) -> Result<(), Error> {
-    let name = module(id);
-    super::remove(&extensions_dir(dirs).join(format!("{name}.py")), report)?;
-    // What Python compiled of it.
-    let cache = extensions_dir(dirs).join("__pycache__");
-    for path in list(&cache)? {
-        if path
-            .file_name()
-            .is_some_and(|n| n.to_string_lossy().starts_with(&format!("{name}.")))
-        {
-            super::remove(&path, report)?;
-        }
+/// The menu's Python extension and scripts there are now, scripts found by
+/// their mark, in the scripts folder and a submenu's.
+pub(super) fn existing(id: &str, dirs: &Dirs) -> Result<Vec<PathBuf>, Error> {
+    let mut found = Vec::new();
+    let python = python_dir(dirs).join(format!("{}.py", module(id)));
+    if python.is_file() {
+        found.push(python);
     }
-    // Scripts, found by their mark, in the folder and a submenu's; a
-    // submenu's folder goes once it is empty.
     let mark_line = format!("# {}", mark(id));
-    let scripts = scripts_dir(dirs);
-    for path in list(&scripts)? {
+    for path in list(&scripts_dir(dirs))? {
         if path.is_dir() {
-            let before = report.removed.len();
             for inner in list(&path)? {
-                remove_marked(&inner, &mark_line, report)?;
+                if marked(&inner, &mark_line) {
+                    found.push(inner);
+                }
             }
-            if report.removed.len() > before && list(&path)?.is_empty() {
-                std::fs::remove_dir(&path).map_err(|e| Error::io(&path, e))?;
+        } else if marked(&path, &mark_line) {
+            found.push(path);
+        }
+    }
+    Ok(found)
+}
+
+/// After `removed` went: a submenu's scripts folder they left empty, and,
+/// with `cache`, what Python compiled of the extension.
+pub(super) fn tidy(id: &str, dirs: &Dirs, removed: &[PathBuf], cache: bool) -> Result<(), Error> {
+    let scripts = scripts_dir(dirs);
+    for path in removed {
+        if let Some(folder) = path
+            .parent()
+            .filter(|f| f.parent() == Some(scripts.as_path()))
+            && folder.is_dir()
+            && list(folder)?.is_empty()
+        {
+            std::fs::remove_dir(folder).map_err(|e| Error::io(folder, e))?;
+        }
+    }
+    if cache {
+        let prefix = format!("{}.", module(id));
+        for path in list(&python_dir(dirs).join("__pycache__"))? {
+            if path
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with(&prefix))
+            {
+                std::fs::remove_file(&path).map_err(|e| Error::io(&path, e))?;
             }
-        } else {
-            remove_marked(&path, &mark_line, report)?;
         }
     }
     Ok(())
 }
 
-/// Removes `path` if it is a script holding `mark_line`.
-fn remove_marked(path: &Path, mark_line: &str, report: &mut Report) -> Result<(), Error> {
-    if !path.is_file() {
-        return Ok(());
-    }
-    // Not text, or unreadable: not one of ours.
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return Ok(());
-    };
-    if text.lines().any(|l| l == mark_line) {
-        super::remove(path, report)?;
-    }
-    Ok(())
+/// Whether `path` is a file holding `mark_line`: unreadable, or not text,
+/// is not one of ours.
+fn marked(path: &Path, mark_line: &str) -> bool {
+    path.is_file() && std::fs::read_to_string(path).is_ok_and(|t| t.lines().any(|l| l == mark_line))
 }
 
 /// A label as a file's name, which Nautilus shows: no `/`, not hidden.

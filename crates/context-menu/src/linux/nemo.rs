@@ -5,8 +5,8 @@
 use std::fmt::Write as _;
 
 use super::quote::{key_value, shell};
-use super::{Dirs, File, mark, remove_named};
-use crate::{Count, Error, Files, Item, Menu, Report};
+use super::{Dirs, File, mark, named};
+use crate::{Count, Error, Files, Item, Menu};
 
 fn dir(dirs: &Dirs) -> std::path::PathBuf {
     dirs.data_home.join("nemo/actions")
@@ -28,8 +28,8 @@ pub(super) fn files(menu: &Menu, dirs: &Dirs, out: &mut Vec<File>, notes: &mut V
     }
 }
 
-pub(super) fn remove(id: &str, dirs: &Dirs, report: &mut Report) -> Result<(), Error> {
-    remove_named(&dir(dirs), id, ".nemo_action", report)
+pub(super) fn existing(id: &str, dirs: &Dirs) -> Result<Vec<std::path::PathBuf>, Error> {
+    named(&dir(dirs), id, ".nemo_action")
 }
 
 fn action(menu: &Menu, item: &Item) -> String {
@@ -96,7 +96,7 @@ mod tests {
         let mut notes = Vec::new();
         files(
             &menu,
-            &crate::linux::testing::dirs("nemo", false),
+            &crate::linux::testing::dirs("nemo"),
             &mut out,
             &mut notes,
         );
