@@ -14,8 +14,10 @@ repository.workspace = true
 homepage.workspace = true
 
 [lib]
-# What Nautilus loads.
-crate-type = ["cdylib"]
+# cdylib: what Nautilus loads. rlib: so that `cargo test` builds the library
+# its tests load (into target/<profile>/deps), which it does not for a
+# cdylib alone.
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 context-menu = { path = "../context-menu" }

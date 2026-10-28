@@ -85,14 +85,11 @@ fn setup(name: &str) -> Option<(PathBuf, PathBuf, PathBuf)> {
     Some((dir, library, harness))
 }
 
-/// The extension cargo built, in the folder above the tests' binary.
+/// The extension cargo built for these tests, beside their binary in
+/// `deps`.
 fn built() -> PathBuf {
     let exe = std::env::current_exe().unwrap();
-    let ext = exe
-        .parent()
-        .and_then(Path::parent)
-        .unwrap()
-        .join("libcontext_menu_nautilus.so");
+    let ext = exe.with_file_name("libcontext_menu_nautilus.so");
     assert!(ext.exists(), "{} is not built", ext.display());
     ext
 }
