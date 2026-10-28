@@ -38,7 +38,7 @@
 //! [`install`] returns [`Error::Unsupported`] there.
 
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[cfg(target_os = "linux")]
 pub mod linux;
@@ -343,7 +343,8 @@ pub enum Error {
 }
 
 impl Error {
-    fn io(path: &Path, source: std::io::Error) -> Self {
+    #[cfg(target_os = "linux")]
+    fn io(path: &std::path::Path, source: std::io::Error) -> Self {
         Error::Io {
             path: path.to_path_buf(),
             source,
@@ -403,10 +404,16 @@ pub fn uninstall(id: &str) -> Result<Report, Error> {
 mod tests {
     use super::*;
 
+    /// An absolute path on this system: Windows's have a drive.
+    const PROGRAM: &str = if cfg!(windows) {
+        r"C:\Program Files\App\app.exe"
+    } else {
+        "/usr/bin/app"
+    };
+
     fn menu() -> Menu {
-        Menu::new("packwing", "packwing").item(
-            Item::new("extract", "Extract here", "/usr/bin/packwing").extensions(["ZIP", ".7z"]),
-        )
+        Menu::new("packwing", "packwing")
+            .item(Item::new("extract", "Extract here", PROGRAM).extensions(["ZIP", ".7z"]))
     }
 
     #[test]
@@ -439,14 +446,14 @@ mod tests {
 
     #[test]
     fn items_need_what_installing_needs() {
-        let base = || Item::new("x", "X", "/bin/x");
+        let base = || Item::new("x", "X", PROGRAM);
         let empty = Menu::new("m", "M");
         assert!(empty.validate().is_err(), "no items");
         let twice = Menu::new("m", "M").item(base()).item(base());
         assert!(twice.validate().is_err(), "same id twice");
         for item in [
-            Item::new("x", "", "/bin/x"),
-            Item::new("x", "Two\nlines", "/bin/x"),
+            Item::new("x", "", PROGRAM),
+            Item::new("x", "Two\nlines", PROGRAM),
             Item::new("x", "X", "x"),
             base().arg("a\nb"),
             base().extensions(Vec::<String>::new()),
