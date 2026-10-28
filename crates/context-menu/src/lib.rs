@@ -26,20 +26,26 @@
 //!             .args(["--compare"])
 //!             .count(Count::Many),
 //!     );
-//! let report = context_menu::install(&menu)?;
-//! for note in &report.notes {
-//!     println!("{note}");
+//! // When the app starts: again only when the menu, or what the system
+//! // offers, changed.
+//! if !context_menu::is_current(&menu)? {
+//!     let report = context_menu::install(&menu)?;
+//!     for note in &report.notes {
+//!         println!("{note}");
+//!     }
 //! }
 //! # Ok::<(), context_menu::Error>(())
 //! ```
 //!
 //! Where each file manager keeps its menu, and what each can and cannot do,
-//! is in `docs/linux.md`. Windows and macOS come next; until then
-//! [`install`] returns [`Error::Unsupported`] there.
+//! is in `docs/linux.md`; Nautilus's native extension, which an app's
+//! package installs, in `docs/nautilus.md`. Windows and macOS come next;
+//! until then [`install`] returns [`Error::Unsupported`] there.
 
 use std::fmt;
 use std::path::PathBuf;
 
+mod definition;
 #[cfg(target_os = "linux")]
 pub mod linux;
 
@@ -86,6 +92,47 @@ pub struct AppliesTo {
     pub folders: bool,
     /// How many may be chosen.
     pub count: Count,
+}
+
+/// A file or folder chosen, as a file manager tells it: what
+/// [`AppliesTo::accepts`] decides by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Chosen<'a> {
+    /// Its name, without the folder it is in.
+    pub name: &'a str,
+    /// It is a folder.
+    pub folder: bool,
+}
+
+impl AppliesTo {
+    /// Whether an item applying to this shows for `chosen`: as many as it
+    /// takes, and each one a file or a folder it applies to. Names match an
+    /// extension at their end, in any case: `a.tar.gz` has `gz` and `tar.gz`.
+    pub fn accepts(&self, chosen: &[Chosen<'_>]) -> bool {
+        let count = match self.count {
+            Count::One => chosen.len() == 1,
+            Count::Many => chosen.len() >= 2,
+            Count::Any => !chosen.is_empty(),
+        };
+        count
+            && chosen.iter().all(|c| {
+                if c.folder {
+                    return self.folders;
+                }
+                match &self.files {
+                    Files::None => false,
+                    Files::Any => true,
+                    Files::Extensions(list) => {
+                        let name = c.name.to_lowercase();
+                        list.iter().any(|ext| {
+                            name.len() > ext.len() + 1
+                                && name.ends_with(ext.as_str())
+                                && name.as_bytes()[name.len() - ext.len() - 1] == b'.'
+                        })
+                    }
+                }
+            })
+    }
 }
 
 /// Which files an item shows for.
@@ -282,17 +329,20 @@ impl Item {
     }
 }
 
-/// An id: 1 to 64 lower-case ASCII letters, digits and `-`, neither first
-/// nor last. So it fits a file name or a registry key as it is, and `.`
-/// can join a menu's and an item's.
-fn check_id(what: &str, id: &str) -> Result<(), Error> {
-    let ok = (1..=64).contains(&id.len())
+/// Whether `id` can name a menu or an item: 1 to 64 lower-case ASCII
+/// letters, digits and `-`, neither first nor last. So it fits a file name
+/// or a registry key as it is, and `.` can join a menu's and an item's.
+pub fn valid_id(id: &str) -> bool {
+    (1..=64).contains(&id.len())
         && id
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         && !id.starts_with('-')
-        && !id.ends_with('-');
-    if ok {
+        && !id.ends_with('-')
+}
+
+fn check_id(what: &str, id: &str) -> Result<(), Error> {
+    if valid_id(id) {
         Ok(())
     } else {
         Err(Error::Invalid(format!(
@@ -386,6 +436,22 @@ pub fn install(menu: &Menu) -> Result<Report, Error> {
     }
 }
 
+/// Whether `menu` is installed for the current user as [`install`] would
+/// install it now: false when it is not, when it changed, or when what the
+/// system offers did (such as nautilus-python, added or removed since).
+/// Cheap enough to call when the app starts, and [`install`] when false.
+pub fn is_current(menu: &Menu) -> Result<bool, Error> {
+    menu.validate()?;
+    #[cfg(target_os = "linux")]
+    {
+        linux::is_current(menu, &linux::Dirs::current()?)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err(Error::Unsupported)
+    }
+}
+
 /// Takes the menu `id` away for the current user. Nothing installed is not
 /// an error.
 pub fn uninstall(id: &str) -> Result<Report, Error> {
@@ -423,6 +489,48 @@ mod tests {
             menu().items[0].applies_to.files,
             Files::Extensions(vec!["zip".into(), "7z".into()])
         );
+    }
+
+    #[test]
+    fn items_accept_what_they_apply_to() {
+        let file = |name| Chosen {
+            name,
+            folder: false,
+        };
+        let dir = Chosen {
+            name: "photos",
+            folder: true,
+        };
+        let archives = Item::new("x", "X", PROGRAM)
+            .extensions(["zip", "tar.gz"])
+            .applies_to;
+        assert!(archives.accepts(&[file("a.ZIP"), file("b.tar.gz")]));
+        assert!(!archives.accepts(&[file("a.zip"), file("notes.txt")]));
+        assert!(
+            !archives.accepts(&[file("unzip")]),
+            "a name, not an extension"
+        );
+        assert!(
+            !archives.accepts(&[file(".zip")]),
+            "a hidden file named zip"
+        );
+        assert!(!archives.accepts(&[dir]));
+        assert!(!archives.accepts(&[]));
+
+        let one_folder = Item::new("x", "X", PROGRAM)
+            .folders_only()
+            .count(Count::One)
+            .applies_to;
+        assert!(one_folder.accepts(&[dir]));
+        assert!(!one_folder.accepts(&[dir, dir]));
+        assert!(!one_folder.accepts(&[file("a.zip")]));
+
+        let two = Item::new("x", "X", PROGRAM)
+            .folders(true)
+            .count(Count::Many)
+            .applies_to;
+        assert!(two.accepts(&[dir, file("a")]));
+        assert!(!two.accepts(&[file("a")]));
     }
 
     #[test]

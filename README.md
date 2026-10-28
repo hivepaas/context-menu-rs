@@ -28,9 +28,13 @@ let menu = Menu::new("packwing", "packwing")
             .count(Count::Many),
     );
 
-let report = context_menu::install(&menu)?;   // for the current user
-for note in &report.notes {
-    println!("{note}");                       // such as "restart Nautilus"
+// For the current user, when the app starts: installing again only when
+// the menu, or what the system offers, changed.
+if !context_menu::is_current(&menu)? {
+    let report = context_menu::install(&menu)?;
+    for note in &report.notes {
+        println!("{note}");                   // such as "restart Nautilus"
+    }
 }
 // Later: context_menu::uninstall("packwing")?;
 ```
@@ -41,14 +45,14 @@ Each item runs its program with its arguments and then the paths chosen, in one 
 
 | | How | State |
 |---|---|---|
-| **Nautilus** (GNOME) | An extension through nautilus-python, or else scripts in its Scripts submenu | ✅ |
+| **Nautilus** (GNOME) | A native extension, built once and installed by the app's package under its menu's name ([docs/nautilus.md](docs/nautilus.md)); else an extension through nautilus-python; else scripts in its Scripts submenu | ✅ |
 | **Dolphin** (KDE) | Service menus | ✅ |
 | **Nemo** (Cinnamon) | Actions | ✅ |
 | **Thunar** (Xfce) | Custom actions | Planned |
 | **Windows 11** | In the menu itself, not only under "Show more options": `IExplorerCommand` in a COM DLL and a sparse package; the classic menu too, for Windows 10 | Next |
 | **macOS Finder** | Services first, then a Finder Sync extension | Planned |
 
-What each Linux file manager can and cannot do, and where the files go: [docs/linux.md](docs/linux.md).
+What each Linux file manager can and cannot do, and where the files go: [docs/linux.md](docs/linux.md). The menu's definition, which the native extensions read: [docs/definition.md](docs/definition.md).
 
 ## 🐝 Made by HivePaaS
 

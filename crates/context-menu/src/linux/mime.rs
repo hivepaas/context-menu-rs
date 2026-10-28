@@ -47,7 +47,7 @@ mod tests {
 
     #[test]
     fn extensions_find_their_types() {
-        let d = dirs("mime", false);
+        let d = dirs("mime");
         assert_eq!(types_of("zip", &d.data_dirs), ["application/zip"]);
         assert_eq!(
             types_of("tar.gz", &d.data_dirs),

@@ -63,8 +63,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Linux runs the file managers' tests, with Python and sh; the
-        # others check the menu and build the demo.
+        # Linux runs the file managers' tests, with Python and sh, and loads
+        # the native extension with Nautilus's library; the others check the
+        # menu and build the demo.
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
@@ -72,5 +73,11 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Nautilus's library and GLib's headers, for the extension's test
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libnautilus-extension4 libglib2.0-dev
+          echo CONTEXT_MENU_NAUTILUS_REQUIRED=1 >> "$GITHUB_ENV"
       - run: cargo test --workspace --all-targets --locked
       - run: cargo test --workspace --doc --locked

@@ -6,8 +6,8 @@
 use std::fmt::Write as _;
 
 use super::quote::{exec_arg, key_value};
-use super::{Dirs, File, mark, mime, remove_named};
-use crate::{Count, Error, Files, Item, Menu, Report};
+use super::{Dirs, File, mark, mime, named};
+use crate::{Count, Error, Files, Item, Menu};
 
 fn dir(dirs: &Dirs) -> std::path::PathBuf {
     dirs.data_home.join("kio/servicemenus")
@@ -28,8 +28,8 @@ pub(super) fn files(menu: &Menu, dirs: &Dirs, out: &mut Vec<File>, notes: &mut V
     }
 }
 
-pub(super) fn remove(id: &str, dirs: &Dirs, report: &mut Report) -> Result<(), Error> {
-    remove_named(&dir(dirs), id, ".desktop", report)
+pub(super) fn existing(id: &str, dirs: &Dirs) -> Result<Vec<std::path::PathBuf>, Error> {
+    named(&dir(dirs), id, ".desktop")
 }
 
 /// The MIME types `item` shows for, or none when it would show for nothing
@@ -112,7 +112,7 @@ mod tests {
 
     #[test]
     fn an_item_is_a_service_menu() {
-        let d = dirs("dolphin", false);
+        let d = dirs("dolphin");
         let menu = Menu::new("packwing", "packwing")
             .submenu(true)
             .icon("package-x-generic")
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn items_for_nothing_known_are_left_out() {
-        let d = dirs("dolphin-none", false);
+        let d = dirs("dolphin-none");
         let menu = Menu::new("m", "M")
             .item(Item::new("a", "A", "/bin/a").extensions(["nope"]))
             .item(Item::new("b", "B", "/bin/b").count(Count::Many));

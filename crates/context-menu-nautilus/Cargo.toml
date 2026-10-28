@@ -1,0 +1,39 @@
+[package]
+name = "context-menu-nautilus"
+version = "0.0.0"
+description = "A native Nautilus extension showing a context-menu-rs menu: built once, named after each menu"
+readme = "../../docs/nautilus.md"
+keywords = ["nautilus", "context-menu", "gnome", "file-manager"]
+categories = ["os::linux-apis"]
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+# What Nautilus loads.
+crate-type = ["cdylib"]
+
+[dependencies]
+context-menu = { path = "../context-menu" }
+
+# dladdr: the extension finds its own file name, which names its menu.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+# The workspace's lints, but `unsafe_code` is `deny` rather than `forbid`:
+# Nautilus's interface is C, and src/ffi.rs allows it there alone.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
