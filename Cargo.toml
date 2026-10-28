@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+members = ["crates/context-menu"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+authors = ["HivePaaS"]
+repository = "https://github.com/hivepaas/context-menu-rs"
+homepage = "https://github.com/hivepaas/context-menu-rs"
+
+# The same rules as hivepack: no unsafe code, and library code never panics.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
