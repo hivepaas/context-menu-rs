@@ -1,14 +1,16 @@
 //! Linux: Nautilus (GNOME Files), Dolphin and Nemo, each from files in the
-//! user's data folder (`$XDG_DATA_HOME`, `~/.local/share`). Every file
-//! manager gets its files, installed or not, so the menu is there when one
-//! is; and the menu's definition goes in `context-menu-rs/<id>.menu`, for
-//! the native extensions. See `docs/linux.md`.
+//! user's data folder (`$XDG_DATA_HOME`, `~/.local/share`), and Thunar from
+//! its custom actions in the user's config folder. Every file manager gets
+//! its files, installed or not, so the menu is there when one is; and the
+//! menu's definition goes in `context-menu-rs/<id>.menu`, for the native
+//! extensions. See `docs/linux.md`.
 
 mod dolphin;
 mod mime;
 mod nautilus;
 mod nemo;
 mod quote;
+mod thunar;
 
 pub use nautilus::{Way, native_name};
 
@@ -31,6 +33,11 @@ pub struct Dirs {
     /// The folders Nautilus loads its native extensions from, those there
     /// are: the menu's own extension or nautilus-python may be in one.
     pub nautilus_extensions: Vec<PathBuf>,
+    /// The user's config folder: `$XDG_CONFIG_HOME`, or `~/.config`.
+    pub config_home: PathBuf,
+    /// The system's config folders, `$XDG_CONFIG_DIRS`: Thunar's sample
+    /// actions are in one.
+    pub config_dirs: Vec<PathBuf>,
 }
 
 impl Dirs {
@@ -41,10 +48,22 @@ impl Dirs {
         let shared = var("XDG_DATA_DIRS").unwrap_or_else(|| "/usr/local/share:/usr/share".into());
         let mut data_dirs = vec![data_home.clone()];
         data_dirs.extend(std::env::split_paths(&shared).filter(|d| d.is_absolute()));
+        let config_home = match var("XDG_CONFIG_HOME") {
+            Some(d) if Path::new(&d).is_absolute() => PathBuf::from(d),
+            _ => std::env::home_dir()
+                .filter(|h| h.is_absolute())
+                .ok_or(Error::NoHome)?
+                .join(".config"),
+        };
+        let config_dirs = var("XDG_CONFIG_DIRS").unwrap_or_else(|| "/etc/xdg".into());
         Ok(Dirs {
             data_home,
             data_dirs,
             nautilus_extensions: nautilus::extension_dirs(),
+            config_home,
+            config_dirs: std::env::split_paths(&config_dirs)
+                .filter(|d| d.is_absolute())
+                .collect(),
         })
     }
 }
@@ -85,6 +104,7 @@ pub fn install(menu: &Menu, dirs: &Dirs) -> Result<Report, Error> {
         write(&f)?;
         report.written.push(f.path);
     }
+    thunar::update(&menu.id, Some(menu), dirs, &mut report)?;
     Ok(report)
 }
 
@@ -96,6 +116,7 @@ pub fn uninstall(id: &str, dirs: &Dirs) -> Result<Report, Error> {
         remove(&path, &mut report)?;
     }
     nautilus::tidy(id, dirs, &report.removed, true)?;
+    thunar::update(id, None, dirs, &mut report)?;
     Ok(report)
 }
 
@@ -127,7 +148,7 @@ pub fn is_current(menu: &Menu, dirs: &Dirs) -> Result<bool, Error> {
             return Ok(false);
         }
     }
-    Ok(true)
+    thunar::is_current(menu, dirs)
 }
 
 /// What an install of `menu` writes, and its notes.
@@ -268,6 +289,8 @@ pub(crate) mod testing {
             data_dirs: vec![data_home.clone(), shared],
             data_home,
             nautilus_extensions: vec![extensions],
+            config_home: root.join("config"),
+            config_dirs: vec![root.join("xdg")],
         }
     }
 
@@ -303,10 +326,18 @@ mod tests {
             )
     }
 
-    fn names(paths: &[PathBuf], root: &Path) -> Vec<String> {
+    /// Paths as names under the data folder, or `config/` and a name under
+    /// the config folder.
+    fn names(paths: &[PathBuf], d: &Dirs) -> Vec<String> {
         let mut v: Vec<String> = paths
             .iter()
-            .map(|p| p.strip_prefix(root).unwrap().display().to_string())
+            .map(|p| match p.strip_prefix(&d.data_home) {
+                Ok(name) => name.display().to_string(),
+                Err(_) => format!(
+                    "config/{}",
+                    p.strip_prefix(&d.config_home).unwrap().display()
+                ),
+            })
             .collect();
         v.sort();
         v
@@ -323,6 +354,7 @@ mod tests {
             }
             let r = install(&menu(true), &d).unwrap();
             let mut want = vec![
+                "config/Thunar/uca.xml",
                 "context-menu-rs/packwing.menu",
                 "kio/servicemenus/packwing.compare.desktop",
                 "kio/servicemenus/packwing.compress.desktop",
@@ -342,7 +374,7 @@ mod tests {
                 Way::Native => {}
             }
             want.sort();
-            assert_eq!(names(&r.written, &d.data_home), want, "{way:?}");
+            assert_eq!(names(&r.written, &d), want, "{way:?}");
             assert!(r.removed.is_empty());
             let mode = |p: &str| {
                 fs::metadata(d.data_home.join(p))
@@ -373,7 +405,7 @@ mod tests {
         smaller.items.pop();
         let r = install(&smaller, &d).unwrap();
         assert_eq!(
-            names(&r.removed, &d.data_home),
+            names(&r.removed, &d),
             [
                 "kio/servicemenus/packwing.compare.desktop",
                 "nautilus/scripts/packwing/Compare",

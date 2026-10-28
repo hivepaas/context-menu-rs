@@ -48,7 +48,7 @@ Each item runs its program with its arguments and then the paths chosen, in one 
 | **Nautilus** (GNOME) | A native extension, built once and installed by the app's package under its menu's name ([docs/nautilus.md](docs/nautilus.md)); else an extension through nautilus-python; else scripts in its Scripts submenu | ✅ |
 | **Dolphin** (KDE) | Service menus | ✅ |
 | **Nemo** (Cinnamon) | Actions | ✅ |
-| **Thunar** (Xfce) | Custom actions | Planned |
+| **Thunar** (Xfce) | Custom actions, merged with the user's own | ✅ |
 | **Windows 11** | In the menu itself, not only under "Show more options": `IExplorerCommand` in a COM DLL and a sparse package; the classic menu too, for Windows 10 | Next |
 | **macOS Finder** | Services first, then a Finder Sync extension | Planned |
 
