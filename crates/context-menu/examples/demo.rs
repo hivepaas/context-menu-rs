@@ -1,7 +1,7 @@
 //! Puts a demo menu in the file manager, whose items run this program again
-//! with the paths chosen; it shows them in a notification, where
-//! `notify-send` is, and writes them to `context-menu-demo.log` in the
-//! temporary folder.
+//! with the paths chosen; it shows them in a notification where
+//! `notify-send` is, or a message box on Windows, and writes them to
+//! `context-menu-demo.log` in the temporary folder.
 //!
 //! ```text
 //! cargo run --example demo -- install
@@ -90,7 +90,28 @@ fn run(args: &[String]) {
     {
         let _ = writeln!(f, "{text}");
     }
-    let _ = std::process::Command::new("notify-send")
-        .args(["context-menu demo", &text])
-        .status();
+    show(&text);
+}
+
+/// Shows `text` in a notification, or on Windows a message box; with
+/// `CONTEXT_MENU_DEMO_QUIET` set, as for tests with no screen, not at all.
+fn show(text: &str) {
+    if std::env::var_os("CONTEXT_MENU_DEMO_QUIET").is_some() {
+        return;
+    }
+    if cfg!(windows) {
+        let _ = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Add-Type -AssemblyName PresentationFramework; \
+                 [System.Windows.MessageBox]::Show($env:DEMO_TEXT, 'context-menu demo') | Out-Null",
+            ])
+            .env("DEMO_TEXT", text)
+            .status();
+    } else {
+        let _ = std::process::Command::new("notify-send")
+            .args(["context-menu demo", text])
+            .status();
+    }
 }

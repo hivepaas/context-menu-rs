@@ -39,8 +39,9 @@
 //!
 //! Where each file manager keeps its menu, and what each can and cannot do,
 //! is in `docs/linux.md`; Nautilus's native extension, which an app's
-//! package installs, in `docs/nautilus.md`. Windows and macOS come next;
-//! until then [`install`] returns [`Error::Unsupported`] there.
+//! package installs, in `docs/nautilus.md`; Windows's classic menu in
+//! `docs/windows.md`. macOS comes next; until then [`install`] returns
+//! [`Error::Unsupported`] there.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -48,6 +49,8 @@ use std::path::PathBuf;
 mod definition;
 #[cfg(target_os = "linux")]
 pub mod linux;
+#[cfg(any(windows, test))]
+pub mod windows;
 
 /// An app's items in the right-click menu.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -365,9 +368,10 @@ fn check_label(what: &str, label: &str) -> Result<(), Error> {
 /// What [`install`] or [`uninstall`] did.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Report {
-    /// The files written.
+    /// The files written, and on Windows the registry keys, as
+    /// `HKEY_CURRENT_USER\Software\Classes\…`.
     pub written: Vec<PathBuf>,
-    /// The files taken away: an earlier install's.
+    /// The files or keys taken away: an earlier install's.
     pub removed: Vec<PathBuf>,
     /// What the user may need to know or do, such as restarting a file
     /// manager, in English.
@@ -430,7 +434,11 @@ pub fn install(menu: &Menu) -> Result<Report, Error> {
     {
         linux::install(menu, &linux::Dirs::current()?)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        windows::install(menu, &windows::Root::current()?)
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         Err(Error::Unsupported)
     }
@@ -446,7 +454,11 @@ pub fn is_current(menu: &Menu) -> Result<bool, Error> {
     {
         linux::is_current(menu, &linux::Dirs::current()?)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        windows::is_current(menu, &windows::Root::current()?)
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         Err(Error::Unsupported)
     }
@@ -460,7 +472,11 @@ pub fn uninstall(id: &str) -> Result<Report, Error> {
     {
         linux::uninstall(id, &linux::Dirs::current()?)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        windows::uninstall(id, &windows::Root::current()?)
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         Err(Error::Unsupported)
     }

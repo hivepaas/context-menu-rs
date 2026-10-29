@@ -14,5 +14,13 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+# The classic menu's verbs, in the registry.
+[target.'cfg(windows)'.dependencies]
+winreg = "0.56"
+
+# The tests read the registry back.
+[target.'cfg(windows)'.dev-dependencies]
+winreg = "0.56"
+
 [lints]
 workspace = true
