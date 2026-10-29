@@ -3,19 +3,26 @@
 use std::path::PathBuf;
 
 use winreg::RegKey;
-use winreg::enums::HKEY_CURRENT_USER;
+use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
 
-use super::{Key, MARK, data_home, definition_path, plan};
+use super::{Key, MARK, clsid, data_home, definition_path, plan};
 use crate::{Error, Menu, Report};
 
 /// Where the menu goes: the classes key under `HKEY_CURRENT_USER`, and the
-/// data folder its definition goes in.
+/// data folder its definition goes in; and where Windows says whether an
+/// app's package serves the menu with the native extension.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Root {
     /// `Software\Classes` for the user's own, which Explorer reads.
     pub classes: String,
     /// `%LOCALAPPDATA%`.
     pub data_home: PathBuf,
+    /// The packages declaring each COM class, by class, with its hive:
+    /// `HKEY_LOCAL_MACHINE\SOFTWARE\Classes\PackagedCom\ClassIndex`.
+    pub class_index: String,
+    /// The packages registered for the user, with its hive:
+    /// `HKEY_CURRENT_USER\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages`.
+    pub user_packages: String,
 }
 
 impl Root {
@@ -24,6 +31,8 @@ impl Root {
         Ok(Root {
             classes: r"Software\Classes".into(),
             data_home: data_home()?,
+            class_index: r"HKEY_LOCAL_MACHINE\SOFTWARE\Classes\PackagedCom\ClassIndex".into(),
+            user_packages: r"HKEY_CURRENT_USER\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages".into(),
         })
     }
 
@@ -45,6 +54,37 @@ impl Root {
             .create_subkey(&self.classes)
             .map(|(k, _)| k)
             .map_err(|e| self.error("", e))
+    }
+}
+
+/// The key at `path`, a full name with its hive.
+fn open_full(path: &str) -> Option<RegKey> {
+    let (hive, rest) = path.split_once('\\')?;
+    let hive = match hive {
+        "HKEY_LOCAL_MACHINE" => HKEY_LOCAL_MACHINE,
+        "HKEY_CURRENT_USER" => HKEY_CURRENT_USER,
+        _ => return None,
+    };
+    RegKey::predef(hive).open_subkey(rest).ok()
+}
+
+/// The package that serves the menu `id` with the native extension, when
+/// one declaring its class is registered for the user.
+fn package(id: &str, root: &Root) -> Option<String> {
+    let declaring = open_full(&format!(r"{}\{{{}}}", root.class_index, clsid(id)))?;
+    let registered = open_full(&root.user_packages)?;
+    declaring
+        .enum_keys()
+        .flatten()
+        .find(|name| registered.open_subkey(name).is_ok())
+}
+
+/// What `install` writes under `root`: the plan, or nothing when a package
+/// serves the menu, in the classic menu as well as Windows 11's.
+fn wanted(menu: &Menu, root: &Root) -> (Vec<Key>, Option<String>) {
+    match package(&menu.id, root) {
+        Some(name) => (Vec::new(), Some(name)),
+        None => (plan(menu), None),
     }
 }
 
@@ -117,7 +157,7 @@ fn verbs(keys: &[Key]) -> Vec<&str> {
 pub fn install(menu: &Menu, root: &Root) -> Result<Report, Error> {
     menu.validate()?;
     let classes = root.open()?;
-    let keys = plan(menu);
+    let (keys, package) = wanted(menu, root);
     let wanted = verbs(&keys);
     let mut report = Report::default();
     for path in existing(&classes, &menu.id) {
@@ -150,11 +190,15 @@ pub fn install(menu: &Menu, root: &Root) -> Result<Report, Error> {
         source,
     })?;
     report.written.push(definition);
-    report.notes.push(
-        "Windows: the items are in the classic menu, which Windows 11 shows under \
-         \"Show more options\"; Windows runs the program once for each file chosen."
+    report.notes.push(match package {
+        Some(name) => format!(
+            "Windows: the package {name} serves the menu, with the native extension, in \
+             Windows 11's menu and under \"Show more options\"."
+        ),
+        None => "Windows: the items are in the classic menu, which Windows 11 shows under \
+                 \"Show more options\"; Windows runs the program once for each file chosen."
             .into(),
-    );
+    });
     Ok(report)
 }
 
@@ -184,7 +228,8 @@ pub fn uninstall(id: &str, root: &Root) -> Result<Report, Error> {
 }
 
 /// Whether the registry under `root`, and the definition, hold `menu` as
-/// [`install`] writes it, and nothing else of the menu's.
+/// [`install`] writes it, and nothing else of the menu's: false too when a
+/// package serving it came or went.
 pub fn is_current(menu: &Menu, root: &Root) -> Result<bool, Error> {
     menu.validate()?;
     let Ok(classes) = RegKey::predef(HKEY_CURRENT_USER).open_subkey(&root.classes) else {
@@ -195,6 +240,6 @@ pub fn is_current(menu: &Menu, root: &Root) -> Result<bool, Error> {
         read(&classes, &path, &mut there).map_err(|e| root.error(&path, e))?;
     }
     let definition = std::fs::read_to_string(definition_path(&menu.id, &root.data_home));
-    Ok(sorted(there) == sorted(plan(menu))
+    Ok(sorted(there) == sorted(wanted(menu, root).0)
         && definition.is_ok_and(|text| text == menu.to_definition()))
 }

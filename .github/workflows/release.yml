@@ -1,8 +1,8 @@
 name: Release
 
-# Builds the native Nautilus extension for each architecture. On a tag
-# (vX.Y.Z), the libraries and their sums go to a draft release, published by
-# hand; run by hand, they are the run's artifacts.
+# Builds the native extensions, Nautilus's and Windows's, for each
+# architecture. On a tag (vX.Y.Z), the libraries and their sums go to a draft
+# release, published by hand; run by hand, they are the run's artifacts.
 
 on:
   push:
@@ -48,10 +48,47 @@ jobs:
           path: libcontext-menu-nautilus-${{ matrix.arch }}.so*
           if-no-files-found: error
 
+  windows:
+    name: Windows extension (${{ matrix.arch }})
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-pc-windows-msvc
+          - arch: aarch64
+            target: aarch64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      # The C runtime in the library: Explorer loads it on machines with no
+      # Visual C++ runtime installed.
+      - run: cargo build --release --locked -p context-menu-windows --target ${{ matrix.target }}
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+      - name: Name and sum it
+        shell: pwsh
+        run: |
+          $out = "context-menu-windows-${{ matrix.arch }}.dll"
+          Copy-Item "target/${{ matrix.target }}/release/context_menu_windows.dll" $out
+          $sum = (Get-FileHash -Algorithm SHA256 $out).Hash.ToLower()
+          "$sum  $out" | Out-File -Encoding ascii "$out.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.arch }}
+          path: context-menu-windows-${{ matrix.arch }}.dll*
+          if-no-files-found: error
+
   publish:
     name: Draft the release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: nautilus
+    needs: [nautilus, windows]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

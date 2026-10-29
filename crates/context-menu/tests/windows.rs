@@ -30,6 +30,10 @@ impl Scratch {
             root: Root {
                 classes: format!(r"{key}\Classes"),
                 data_home,
+                // Where packages are listed, both under the scratch key:
+                // none until a test adds one.
+                class_index: format!(r"HKEY_CURRENT_USER\{key}\ClassIndex"),
+                user_packages: format!(r"HKEY_CURRENT_USER\{key}\Packages"),
             },
             key,
         }
@@ -167,4 +171,41 @@ fn other_verbs_stay() {
     ] {
         assert!(c.open_subkey(path).is_ok(), "{path}");
     }
+}
+
+#[test]
+fn a_package_serving_the_menu_takes_the_classic_one_too() {
+    let s = Scratch::new("package");
+    install(&menu(), &s.root).unwrap();
+    let c = s.classes();
+    assert!(c.open_subkey(r"Directory\shell\photo-kit").is_ok());
+
+    // A package declaring the menu's class, but another user's: no change.
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let name = "PhotoKit_1.0.0.0_x64__abcdefghjkmnp";
+    let class = format!(
+        r"{}\ClassIndex\{{{}}}\{name}",
+        s.key,
+        context_menu::windows::clsid("photo-kit")
+    );
+    hkcu.create_subkey(&class).unwrap();
+    assert!(is_current(&menu(), &s.root).unwrap());
+
+    // Registered for this user: the classic verbs go, the definition stays.
+    hkcu.create_subkey(format!(r"{}\Packages\{name}", s.key))
+        .unwrap();
+    assert!(!is_current(&menu(), &s.root).unwrap());
+    let r = install(&menu(), &s.root).unwrap();
+    assert_eq!(r.removed.len(), 3, "{:?}", r.removed);
+    assert_eq!(r.written.len(), 1, "the definition: {:?}", r.written);
+    assert!(r.notes[0].contains(name), "{:?}", r.notes);
+    assert!(c.open_subkey(r"Directory\shell\photo-kit").is_err());
+    assert!(is_current(&menu(), &s.root).unwrap());
+
+    // The package removed: the classic menu again.
+    hkcu.delete_subkey_all(format!(r"{}\Packages\{name}", s.key))
+        .unwrap();
+    assert!(!is_current(&menu(), &s.root).unwrap());
+    install(&menu(), &s.root).unwrap();
+    assert!(c.open_subkey(r"Directory\shell\photo-kit").is_ok());
 }
