@@ -1,6 +1,71 @@
 # macOS
 
-Finder's right-click menu takes items from two places: Quick Actions, which are Automator workflows in the user's Services folder, and Finder Sync extensions, which are app extensions inside an app's bundle. `install` writes Quick Actions, for any app, with no rights beyond the user's. A Finder Sync extension comes later (see "Not yet").
+Finder's right-click menu takes items from two places: Finder Sync extensions, which are app extensions inside an app's bundle, and Quick Actions, which are Automator workflows in the user's Services folder. So there are two ways in:
+
+- **With the native extension**, `context-menu-finder`, which an app's bundle holds, the menu is in Finder's own menu, right after Quick Actions, in a submenu of its own, showing exactly the items for what is chosen, as on Linux and Windows 11. `install` sees it and writes no Quick Actions.
+- **`install` alone** writes Quick Actions, for any app, with no change to its bundle. They have the limits below.
+
+Either way `install` needs no rights beyond the user's, and writes the menu's definition in `~/Library/Application Support/context-menu-rs/<menu>.menu` ([definition.md](definition.md)).
+
+## The native extension
+
+It is one program, `context-menu-finder`, built once for everybody's menus. An app's bundle holds it twice: as a Finder Sync extension, which Finder runs in the sandbox, and as its helper, an app with no window, which starts the items' programs, since the sandbox lets the extension start none.
+
+```text
+Photo Kit.app/Contents/MacOS/photokit
+Photo Kit.app/Contents/PlugIns/ContextMenu.appex/Contents/MacOS/context-menu-finder
+Photo Kit.app/Contents/Helpers/ContextMenuHelper.app/Contents/MacOS/context-menu-finder
+```
+
+What each is comes from its bundle: the extension's `Info.plist` has `NSExtension`, and both name the menu they serve (`ContextMenuRsMenu`) and the app group they share (`ContextMenuRsGroup`). So:
+
+- **The extension reads the menu's definition** each time Finder asks what to show, which `install` writes for each user; a changed menu (the app's settings turning an item off, say) is `install` again, and Finder shows the change at the next right click. The sandbox lets it read that folder alone, with a temporary exception, read only. Its home there is the user's own, from the system's list of users: the sandbox points `HOME` at the extension's container.
+- **It shows in every folder**: the startup disk's, under `/`, and every other volume's, which `/` does not take in, as they come and go.
+- **An item chosen is a request**: the extension leaves the item's id and the paths chosen in the app group's folder, `~/Library/Group Containers/<group>/requests`, which only the app's own programs can write, and opens the helper. The system drops the arguments a sandboxed extension gives an app it opens, and a URL scheme would let any web page ask; the group's folder does neither.
+- **The helper checks the request against the menu**: the item must be the menu's, and the paths absolute, there, and what the item applies to. It takes the program and its arguments from the definition, never from the request; starts it with the paths, in the first one's folder, in a process group of its own, without waiting; and ends. A request older than a minute is dropped.
+
+`install` asks the system for the extension whose `Info.plist` names the menu (`pluginkit -m -p com.apple.FinderSync ContextMenuRsMenu=<menu>`). When there is one:
+
+- It writes no Quick Actions, and removes those an earlier install wrote, so the menu does not show twice.
+- It turns the extension on when the user has not turned it on or off (`pluginkit -e use`), as with Quick Actions: the system leaves a new extension off. One the user turned off, in System Settings, stays off, with no Quick Actions in its place.
+
+When there is none, but the program calling `install` is in an app bundle holding the extension, it tells the system of it first: LaunchServices (`lsregister -f -R`), which PlugInKit needs, then PlugInKit (`pluginkit -a`). The system does this by itself for apps in the Applications folder; for others, such as the demo, `install` does. `is_current` is false when an extension serving the menu comes or goes, is in the app but unknown to the system, or has not been turned on or off. `uninstall` removes the definition, so the extension shows nothing; the extension stays the app's.
+
+What the menu shows:
+
+- **A submenu with the menu's title** and its items, or, without `Menu::submenu`, the items themselves, right after Quick Actions.
+- **Each item for what it applies to, all of it** (`AppliesTo::accepts`): `Count::One` and `Count::Many` count what is chosen, `tar.gz` is told from `gz`, and with a zip and a folder chosen an item for archives does not show. The folders Finder shows as files, apps and documents that are packages, count as files. Nothing shows when no item applies.
+- **One run with every path**, as everywhere.
+- **No icons** yet.
+
+### For packagers
+
+Get the program from the [releases](https://github.com/hivepaas/context-menu-rs/releases), `context-menu-finder-macos`, for both Apple silicon and Intel, or build it:
+
+```sh
+cargo build --release -p context-menu-finder   # target/release/context-menu-finder
+```
+
+Copy it into the app's bundle twice, at `context_menu::macos::EXTENSION_PATH` and `HELPER_PATH`, each as `Contents/MacOS/context-menu-finder`. `context_menu::macos::FinderExtension::new(menu id, app's bundle id, team id, name)`, with `version` set to the app's, gives the rest:
+
+- `extension_plist()` and `helper_plist()`, each bundle's `Contents/Info.plist`. The extension's bundle id is the app's and `.context-menu`, the helper's the app's and `.context-menu-helper`.
+- `extension_entitlements()` and `helper_entitlements()`, to sign them with: the sandbox for the extension, the app group for both, `<team id>.<app's bundle id>.context-menu`, and reading the definitions for the extension. A group that starts with the team's id needs no provisioning profile; it does need the team's certificate, so the extension cannot be signed ad hoc.
+
+Sign inside out, with the hardened runtime, then the app, and notarize it as any app:
+
+```sh
+codesign --force --sign "$IDENTITY" --options runtime --timestamp \
+  --entitlements helper.entitlements "Photo Kit.app/Contents/Helpers/ContextMenuHelper.app"
+codesign --force --sign "$IDENTITY" --options runtime --timestamp \
+  --entitlements extension.entitlements "Photo Kit.app/Contents/PlugIns/ContextMenu.appex"
+codesign --force --sign "$IDENTITY" --options runtime --timestamp "Photo Kit.app"
+```
+
+The app calls `install`, and `is_current` when it starts, from its own program, in its bundle, as on any other system.
+
+### How it is made
+
+`src/lib.rs` decides, in plain Rust tested on every system: what shows for the files chosen, the requests' text, leaving and taking them, and what a request runs. `src/ffi.rs` is the Objective-C side, through objc2, and the only unsafe code: the extension's principal class, `ContextMenuRsFinderSync`, a `FIFinderSync` that `NSExtensionMain` hands to Finder; the volumes watched; the menu; and the helper. Finder asks for the menu, and calls an item chosen, on one of the extension's threads, not the main one, and takes the menu there: it is built there, as Apple's own template builds it. Every method Finder calls catches a panic and shows nothing instead.
 
 ## Quick Actions
 
@@ -38,9 +103,37 @@ The system says this through `UTType`, from JavaScript for Automation (`osascrip
 
 ## Trying it
 
-`cargo run --example demo -- install` writes the demo's Quick Actions; right-click a file or a folder in Finder and open Quick Actions. Choosing an item shows the paths in an alert, and writes them to `context-menu-demo.log` in `$TMPDIR`. `uninstall` takes them away.
+`cargo run --example demo -- install` writes the demo's Quick Actions; right-click a file or a folder in Finder and open Quick Actions. Choosing an item shows the paths in an alert, and writes them to `context-menu-demo.log` in `$TMPDIR`. `uninstall` takes them away, and `status` says whether `install` would change anything.
+
+For the native extension, with a code-signing identity of your team's in the keychain:
+
+```sh
+IDENTITY='Developer ID Application: Name (TEAMID)' scripts/macos/demo-app.sh   # --remove takes it away
+```
+
+It builds the demo as an app holding the extension and its helper, `target/context-menu-demo/ContextMenuDemo.app`, with the `Info.plist`s and entitlements `demo bundle` writes, signs it, and runs `install` from inside it: `install` tells the system of the extension, turns it on, and writes no Quick Actions. The demo's menu is then a submenu, "context-menu demo", in Finder's own menu.
 
 ## What has been tried
+
+### The native extension
+
+On macOS 27.0.1, on Apple silicon, the demo app was built and signed with a Developer ID and the hardened runtime, installed for the user and tried in Finder. `install` told the system of the extension, outside the Applications folder, and turned it on, with no prompt; the demo's Quick Actions were gone. In Finder:
+
+| Chosen | The submenu held |
+|---|---|
+| a zip, a `.tar.gz` | Archives, Anything |
+| a `.gz`, a text file | Anything |
+| a folder | Anything, One folder |
+| two folders | Anything |
+| a zip and a text file | Anything |
+
+Choosing an item ran the demo with the paths, through a request in the app group's folder, with no prompt. Earlier trials, with the same design, showed it on the Desktop, in Downloads, in iCloud Drive and on a USB drive (NTFS), once every volume was watched; that the arguments of a sandboxed extension to the app it opens are dropped; and that Finder asks for the menu off the main thread, which shows no menu when the extension insists on the main one.
+
+The app built again at the same place, the system took the new extension by itself, still on; when a trial's extension was lost to the system instead, telling the system again, LaunchServices first, brought it back, still on.
+
+Not tried yet: notarizing an app with the extension, an Intel Mac, and macOS before 27.
+
+### Quick Actions
 
 The bundles are planned in plain Rust and tested on every system: the files written, the notes, installing again, `is_current` and `uninstall`. On macOS, `tests/macos.rs` writes them to a scratch folder, not `~/Library/Services`, with the types the system knows, and checks:
 
@@ -54,4 +147,6 @@ On that Mac, the demo was then installed for the user and tried in Finder. Its i
 
 ## Not yet
 
-- **A Finder Sync extension**, built into an app's bundle, would put the menu in Finder's menu itself, grouped, and show each item only for what it applies to, as on Linux and Windows 11. But Apple says such an extension is not meant to add a menu to every folder; it must run in the sandbox, so it cannot start the program itself and has to ask the app to; and it would have to read the menu's definition from a place the sandbox lets it reach. It needs trying on a virtual machine before it is decided on.
+- **Icons** in the extension's menu.
+- **The menu of a folder's background**, which Finder asks the extension for too: as on Linux and Windows, items are for what is chosen.
+- Apple says a Finder Sync extension is meant for folders an app syncs, not every folder; this one watches every folder, as other apps' do, and that has worked so far.

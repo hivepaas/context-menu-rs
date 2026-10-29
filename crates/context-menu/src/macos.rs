@@ -1,6 +1,12 @@
-//! macOS: Finder's Quick Actions, a workflow bundle per item in the user's
-//! Services folder, `~/Library/Services`, with no rights beyond the user's.
-//! See `docs/macos.md`.
+//! macOS: Finder's own menu, from the native extension an app's bundle
+//! holds ([`FinderExtension`]); or without one, Finder's Quick Actions, a
+//! workflow bundle per item in the user's Services folder,
+//! `~/Library/Services`. Either way with no rights beyond the user's. See
+//! `docs/macos.md`.
+//!
+//! The menu's definition goes in `~/Library/Application Support/context-menu-rs/<id>.menu`,
+//! for the extension, which the system says serves the menu: the Quick
+//! Actions are written only when none does.
 //!
 //! A bundle, `<menu>.<item>.workflow`, is what Automator saves for a Quick
 //! Action: an `Info.plist` saying which file types (UTIs) Finder shows it
@@ -15,6 +21,12 @@
 
 // The plan is used by `install`, on macOS, and by tests.
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
+mod finder;
+
+pub use finder::{
+    EXECUTABLE, EXTENSION_PATH, FinderExtension, GROUP_KEY, HELPER_PATH, MENU_KEY, PRINCIPAL_CLASS,
+};
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -36,19 +48,113 @@ pub struct Root {
     /// preferences domain `pbs`, or the path of a property list without its
     /// `.plist`, as `defaults` takes it.
     pub status: String,
+    /// `~/Library/Application Support`, where the menu's definition goes.
+    pub data_home: PathBuf,
+    /// The app bundle the running program is in, if it is in one: when it
+    /// holds the native extension serving the menu, and the system does not
+    /// know of it yet, `install` tells the system of it.
+    pub app: Option<PathBuf>,
 }
 
 impl Root {
-    /// The current user's.
+    /// The current user's, and the running program's app.
     pub fn current() -> Result<Root, Error> {
         let home = std::env::home_dir()
             .filter(|h| h.is_absolute())
             .ok_or(Error::NoHome)?;
+        let app = std::env::current_exe().ok().and_then(|exe| {
+            exe.ancestors()
+                .find(|a| a.extension().is_some_and(|e| e == "app"))
+                .map(Path::to_path_buf)
+        });
         Ok(Root {
             services: home.join("Library/Services"),
             status: "pbs".into(),
+            data_home: home.join("Library/Application Support"),
+            app,
         })
     }
+}
+
+/// Where the definition of the menu `id` goes in `data_home`,
+/// `~/Library/Application Support`: what the native extension reads.
+pub fn definition_path(id: &str, data_home: &Path) -> PathBuf {
+    data_home.join("context-menu-rs").join(format!("{id}.menu"))
+}
+
+/// A Finder extension serving a menu, as the system knows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Served {
+    /// Its bundle identifier.
+    pub id: String,
+    /// Where it is: `<app>/Contents/PlugIns/….appex`.
+    pub path: PathBuf,
+    /// Whether the user turned it on or off.
+    pub election: Election,
+}
+
+/// What the user chose for an extension, in System Settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Election {
+    /// Turned on.
+    On,
+    /// Turned off.
+    Off,
+    /// Neither yet: it is off.
+    None,
+}
+
+/// The extensions in `pluginkit -m -v`'s answer: a line each, starting
+/// with the user's election (`+` on, `!` on for a debugger, `-` off, `?` or
+/// nothing not yet), then the bundle identifier and version, and after tabs
+/// its id, date and path. One another supersedes (`=`) is left out.
+pub(crate) fn parse_plugins(text: &str) -> Vec<Served> {
+    text.lines()
+        .filter_map(|line| {
+            let election = match line.chars().next()? {
+                '+' | '!' => Election::On,
+                '-' => Election::Off,
+                ' ' | '?' => Election::None,
+                _ => return None,
+            };
+            let mut fields = line[1..].trim_start().split('\t');
+            let id = fields.next()?.rsplit_once('(')?.0.to_string();
+            let path = PathBuf::from(fields.nth(2)?);
+            path.is_absolute().then_some(Served { id, path, election })
+        })
+        .collect()
+}
+
+/// What the report says of the extension serving the menu.
+fn served_note(served: &Served) -> String {
+    match served.election {
+        Election::Off => format!(
+            "Finder: the user turned off the extension serving the menu, {}, in System \
+             Settings, so the menu does not show; there are no Quick Actions in its place.",
+            served.id
+        ),
+        Election::On | Election::None => format!(
+            "Finder: the menu is in Finder's own menu, from the extension {}.",
+            served.id
+        ),
+    }
+}
+
+/// Writes the definition of `menu` under `root` whole: to a hidden file
+/// beside it first, then renamed over it, so the extension never reads half
+/// of it.
+fn write_definition(menu: &Menu, root: &Root) -> Result<PathBuf, Error> {
+    let path = definition_path(&menu.id, &root.data_home);
+    let dir = path.parent().unwrap_or(&root.data_home);
+    let tmp = dir.join(format!(".{}.menu.tmp", menu.id));
+    let result = fs::create_dir_all(dir)
+        .and_then(|()| fs::write(&tmp, menu.to_definition()))
+        .and_then(|()| fs::rename(&tmp, &path));
+    result.map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        Error::io(&path, e)
+    })?;
+    Ok(path)
 }
 
 /// The file types of files with each extension, as the system names them:
@@ -556,12 +662,27 @@ fn remove(path: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Installs `menu` under `root`, with the file types `types`, in place of an
-/// earlier install: the bundles that one wrote and this one does not are
-/// removed.
-pub(crate) fn install_with(menu: &Menu, root: &Root, types: &Types) -> Result<Report, Error> {
+/// The Quick Actions an install of `menu` writes, with the file types
+/// `types`, and its notes: none when an extension serves the menu.
+fn wanted(menu: &Menu, types: &Types, served: Option<&Served>) -> (Vec<Bundle>, Vec<String>) {
+    match served {
+        Some(served) => (Vec::new(), vec![served_note(served)]),
+        None => plan(menu, types),
+    }
+}
+
+/// Installs `menu` under `root` in place of an earlier install: its
+/// definition, and its Quick Actions, with the file types `types`, unless
+/// the extension `served` serves it. The bundles the earlier install wrote
+/// and this one does not are removed.
+pub(crate) fn install_with(
+    menu: &Menu,
+    root: &Root,
+    types: &Types,
+    served: Option<&Served>,
+) -> Result<Report, Error> {
     menu.validate()?;
-    let (bundles, notes) = plan(menu, types);
+    let (bundles, notes) = wanted(menu, types, served);
     let mut report = Report {
         notes,
         ..Report::default()
@@ -575,24 +696,44 @@ pub(crate) fn install_with(menu: &Menu, root: &Root, types: &Types) -> Result<Re
     for bundle in &bundles {
         report.written.push(write(bundle, &root.services)?);
     }
+    report.written.push(write_definition(menu, root)?);
     Ok(report)
 }
 
-/// Takes the bundles of the menu `id` away from under `root`.
+/// Takes the bundles and the definition of the menu `id` away from under
+/// `root`.
 pub(crate) fn uninstall_from(id: &str, root: &Root) -> Result<Report, Error> {
     let mut report = Report::default();
-    for path in existing(id, root)? {
+    let definition = definition_path(id, &root.data_home);
+    let mut paths = existing(id, root)?;
+    if fs::symlink_metadata(&definition).is_ok() {
+        paths.push(definition);
+    }
+    for path in paths {
         remove(&path).map_err(|e| Error::io(&path, e))?;
         report.removed.push(path);
     }
     Ok(report)
 }
 
-/// Whether the bundles under `root` are those [`install_with`] would write
-/// for `menu` and `types`, and no others of the menu's.
-pub(crate) fn is_current_with(menu: &Menu, root: &Root, types: &Types) -> Result<bool, Error> {
+/// Whether what is under `root` is what [`install_with`] would write for
+/// `menu`, `types` and `served`, and nothing else of the menu's; and an
+/// extension serving it has been turned on or off.
+pub(crate) fn is_current_with(
+    menu: &Menu,
+    root: &Root,
+    types: &Types,
+    served: Option<&Served>,
+) -> Result<bool, Error> {
     menu.validate()?;
-    let (bundles, _) = plan(menu, types);
+    if served.is_some_and(|s| s.election == Election::None) {
+        return Ok(false);
+    }
+    let definition = fs::read_to_string(definition_path(&menu.id, &root.data_home));
+    if definition.ok().as_deref() != Some(menu.to_definition().as_str()) {
+        return Ok(false);
+    }
+    let (bundles, _) = wanted(menu, types, served);
     let there = existing(&menu.id, root)?;
     let mut planned: Vec<PathBuf> = bundles
         .iter()
@@ -613,44 +754,85 @@ pub(crate) fn is_current_with(menu: &Menu, root: &Root, types: &Types) -> Result
 #[cfg(target_os = "macos")]
 mod system;
 
-/// Installs `menu` under `root`, in place of an earlier install, with the
-/// file types the system knows for its extensions now, and turns on its
-/// Quick Actions the user has not turned on or off yet.
+/// Installs `menu` under `root`, in place of an earlier install: its
+/// definition, and, when no extension serves it, its Quick Actions, with the
+/// file types the system knows for its extensions now. An extension serving
+/// it is told of to the system when `root.app` holds it and the system does
+/// not know it yet, and turned on, as are the Quick Actions, when the user
+/// has not turned it on or off.
 #[cfg(target_os = "macos")]
 pub fn install(menu: &Menu, root: &Root) -> Result<Report, Error> {
     menu.validate()?;
-    let types = system::types(&extensions(menu))?;
-    let mut report = install_with(menu, root, &types)?;
-    let (bundles, _) = plan(menu, &types);
-    let labels: Vec<&str> = bundles.iter().map(|b| b.label.as_str()).collect();
-    if let Err(e) = system::turn_on(&labels, &root.status) {
-        report.notes.push(format!(
-            "Finder: the items could not be turned on ({e}): Customize…, in its Quick \
-             Actions submenu, turns them on."
-        ));
+    let served = system::served(&menu.id).or_else(|| {
+        let app = root.app.as_deref()?;
+        system::register(&menu.id, app).then(|| system::served(&menu.id))?
+    });
+    let types = match served {
+        Some(_) => Types::new(),
+        None => system::types(&extensions(menu))?,
+    };
+    let mut report = install_with(menu, root, &types, served.as_ref())?;
+    match &served {
+        Some(s) if s.election == Election::None => {
+            if let Err(e) = system::turn_on_extension(&s.id) {
+                report.notes.push(format!(
+                    "Finder: the extension could not be turned on ({e}): System Settings, \
+                     under Login Items & Extensions, turns it on."
+                ));
+            }
+        }
+        Some(_) => {}
+        None => {
+            let (bundles, _) = plan(menu, &types);
+            let labels: Vec<&str> = bundles.iter().map(|b| b.label.as_str()).collect();
+            if let Err(e) = system::turn_on(&labels, &root.status) {
+                report.notes.push(format!(
+                    "Finder: the items could not be turned on ({e}): Customize…, in its \
+                     Quick Actions submenu, turns them on."
+                ));
+            }
+        }
     }
-    system::refresh();
-    Ok(report)
-}
-
-/// Takes the menu `id` away from under `root`.
-#[cfg(target_os = "macos")]
-pub fn uninstall(id: &str, root: &Root) -> Result<Report, Error> {
-    let report = uninstall_from(id, root)?;
-    if !report.removed.is_empty() {
+    if served.is_none() || !report.removed.is_empty() {
         system::refresh();
     }
     Ok(report)
 }
 
-/// Whether the bundles under `root` hold `menu` as [`install`] writes it
-/// now, and nothing else of the menu's: false too when the file types the
-/// system knows for its extensions changed, as when an app declaring one
-/// is installed.
+/// Takes the menu `id` away from under `root`: its Quick Actions and its
+/// definition, so an extension serving it shows nothing.
+#[cfg(target_os = "macos")]
+pub fn uninstall(id: &str, root: &Root) -> Result<Report, Error> {
+    let report = uninstall_from(id, root)?;
+    if report.removed.iter().any(|p| p.starts_with(&root.services)) {
+        system::refresh();
+    }
+    Ok(report)
+}
+
+/// Whether what is under `root` holds `menu` as [`install`] writes it now,
+/// and nothing else of the menu's: false too when an extension serving it
+/// came or went, or is in `root.app` and unknown to the system, or has not
+/// been turned on or off; or, with no extension, when the file types the
+/// system knows for its extensions changed, as when an app declaring one is
+/// installed.
 #[cfg(target_os = "macos")]
 pub fn is_current(menu: &Menu, root: &Root) -> Result<bool, Error> {
     menu.validate()?;
-    is_current_with(menu, root, &system::types(&extensions(menu))?)
+    let served = system::served(&menu.id);
+    if served.is_none()
+        && root
+            .app
+            .as_deref()
+            .is_some_and(|app| system::bundled(&menu.id, app))
+    {
+        return Ok(false);
+    }
+    let types = match served {
+        Some(_) => Types::new(),
+        None => system::types(&extensions(menu))?,
+    };
+    is_current_with(menu, root, &types, served.as_ref())
 }
 
 #[cfg(test)]
@@ -679,6 +861,17 @@ mod tests {
         Root {
             services: dir.join("Services"),
             status: dir.join("status").display().to_string(),
+            data_home: dir.join("Application Support"),
+            app: None,
+        }
+    }
+
+    /// An extension serving the menu, with the user's election.
+    fn served(election: Election) -> Served {
+        Served {
+            id: "com.example.packwing.context-menu".into(),
+            path: "/Applications/Pack Wing.app/Contents/PlugIns/ContextMenu.appex".into(),
+            election,
         }
     }
 
@@ -789,9 +982,15 @@ mod tests {
     #[test]
     fn installing_again_replaces_and_uninstall_takes_all_away() {
         let r = root("install");
-        let report = install_with(&menu(true), &r, &types()).unwrap();
-        assert_eq!(report.written.len(), 3);
+        let report = install_with(&menu(true), &r, &types(), None).unwrap();
+        assert_eq!(report.written.len(), 4, "three bundles and the definition");
         assert!(report.removed.is_empty());
+        let definition = definition_path("packwing", &r.data_home);
+        assert_eq!(report.written[3], definition);
+        assert_eq!(
+            Menu::from_definition(&fs::read_to_string(&definition).unwrap()).unwrap(),
+            menu(true)
+        );
         let bundle = r.services.join("packwing.extract.workflow/Contents");
         assert!(bundle.join("Info.plist").is_file() && bundle.join("document.wflow").is_file());
 
@@ -812,12 +1011,12 @@ mod tests {
         // One item fewer: its bundle goes, the rest are written again.
         let mut smaller = menu(true);
         smaller.items.pop();
-        let report = install_with(&smaller, &r, &types()).unwrap();
+        let report = install_with(&smaller, &r, &types(), None).unwrap();
         assert_eq!(
             report.removed,
             [r.services.join("packwing.compare.workflow")]
         );
-        assert_eq!(report.written.len(), 2);
+        assert_eq!(report.written.len(), 3);
         assert!(stray.join("Contents/Info.plist").is_file());
         let mut left: Vec<String> = fs::read_dir(&r.services)
             .unwrap()
@@ -835,7 +1034,8 @@ mod tests {
         );
 
         let report = uninstall_from("packwing", &r).unwrap();
-        assert_eq!(report.removed.len(), 2);
+        assert_eq!(report.removed.len(), 3, "two bundles and the definition");
+        assert!(!definition.exists());
         assert!(others.iter().all(|o| o.exists()));
         assert!(uninstall_from("packwing", &r).unwrap().removed.is_empty());
     }
@@ -844,31 +1044,104 @@ mod tests {
     fn current_until_the_menu_or_the_types_change() {
         let r = root("current");
         assert!(
-            !is_current_with(&menu(true), &r, &types()).unwrap(),
+            !is_current_with(&menu(true), &r, &types(), None).unwrap(),
             "nothing installed"
         );
-        install_with(&menu(true), &r, &types()).unwrap();
-        assert!(is_current_with(&menu(true), &r, &types()).unwrap());
+        install_with(&menu(true), &r, &types(), None).unwrap();
+        assert!(is_current_with(&menu(true), &r, &types(), None).unwrap());
         let mut renamed = menu(true);
         renamed.items[0].label = "Extract".into();
         assert!(
-            !is_current_with(&renamed, &r, &types()).unwrap(),
+            !is_current_with(&renamed, &r, &types(), None).unwrap(),
             "the menu changed"
         );
 
         // An app declares 7z's type: the filter must change.
         let mut declared = types();
         declared.insert("7z".into(), vec!["com.example.7z".into()]);
-        assert!(!is_current_with(&menu(true), &r, &declared).unwrap());
+        assert!(!is_current_with(&menu(true), &r, &declared, None).unwrap());
 
         // A bundle changed by hand, or one gone.
         let info = r
             .services
             .join("packwing.compress.workflow/Contents/Info.plist");
         fs::write(&info, "changed").unwrap();
-        assert!(!is_current_with(&menu(true), &r, &types()).unwrap());
-        install_with(&menu(true), &r, &types()).unwrap();
+        assert!(!is_current_with(&menu(true), &r, &types(), None).unwrap());
+        install_with(&menu(true), &r, &types(), None).unwrap();
         fs::remove_dir_all(r.services.join("packwing.compare.workflow")).unwrap();
-        assert!(!is_current_with(&menu(true), &r, &types()).unwrap());
+        assert!(!is_current_with(&menu(true), &r, &types(), None).unwrap());
+    }
+
+    #[test]
+    fn an_extension_serving_the_menu_takes_the_quick_actions_place() {
+        let r = root("served");
+        install_with(&menu(true), &r, &types(), None).unwrap();
+        let on = served(Election::On);
+        assert!(!is_current_with(&menu(true), &r, &types(), Some(&on)).unwrap());
+
+        // The extension serves it: the Quick Actions go, the definition stays.
+        let report = install_with(&menu(true), &r, &types(), Some(&on)).unwrap();
+        assert_eq!(report.removed.len(), 3, "{:?}", report.removed);
+        assert_eq!(report.written, [definition_path("packwing", &r.data_home)]);
+        assert_eq!(
+            report.notes,
+            [
+                "Finder: the menu is in Finder's own menu, from the extension \
+              com.example.packwing.context-menu."
+            ]
+        );
+        assert!(existing("packwing", &r).unwrap().is_empty());
+        assert!(is_current_with(&menu(true), &r, &types(), Some(&on)).unwrap());
+
+        // Not turned on or off yet: install turns it on.
+        let none = served(Election::None);
+        assert!(!is_current_with(&menu(true), &r, &types(), Some(&none)).unwrap());
+        // Turned off: the user's choice, with no Quick Actions in its place.
+        let off = served(Election::Off);
+        assert!(is_current_with(&menu(true), &r, &types(), Some(&off)).unwrap());
+        let report = install_with(&menu(true), &r, &types(), Some(&off)).unwrap();
+        assert!(report.notes[0].contains("turned off"), "{:?}", report.notes);
+
+        // A changed menu is a changed definition.
+        let mut renamed = menu(true);
+        renamed.items[0].label = "Extract".into();
+        assert!(!is_current_with(&renamed, &r, &types(), Some(&on)).unwrap());
+
+        // The extension gone: the Quick Actions again.
+        assert!(!is_current_with(&menu(true), &r, &types(), None).unwrap());
+        install_with(&menu(true), &r, &types(), None).unwrap();
+        assert_eq!(existing("packwing", &r).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn pluginkit_says_which_extension_and_its_election() {
+        let text = "+    com.example.packwing.context-menu(0.1)\t9EC808FA-B88A\t\
+                    2026-10-29 06:37:32 +0000\t/Applications/Pack Wing.app/Contents/PlugIns/\
+                    ContextMenu.appex\n\
+                    -    com.example.other.context-menu(1.0)\tAB\t2026-10-29\t/Applications/\
+                    Other.app/Contents/PlugIns/ContextMenu.appex\n\
+                    \x20    com.example.third.context-menu(2)\tCD\t2026-10-29\t/tmp/T.app/x.appex\n\
+                    =    com.example.old.context-menu(1)\tEF\t2026-10-28\t/tmp/Old.app/x.appex\n\
+                    ?    com.example.fourth.context-menu(3)\tGH\t2026-10-29\t/tmp/F.app/x.appex\n\
+                    \x20(5 plug-ins)\n";
+        let found = parse_plugins(text);
+        assert_eq!(
+            found[0],
+            Served {
+                id: "com.example.packwing.context-menu".into(),
+                path: "/Applications/Pack Wing.app/Contents/PlugIns/ContextMenu.appex".into(),
+                election: Election::On,
+            }
+        );
+        assert_eq!(found[1].election, Election::Off);
+        assert_eq!(found[2].election, Election::None);
+        assert_eq!(found[2].id, "com.example.third.context-menu");
+        assert_eq!(
+            found[3].id, "com.example.fourth.context-menu",
+            "the superseded left out"
+        );
+        assert_eq!(found[3].election, Election::None);
+        assert_eq!(found.len(), 4);
+        assert!(parse_plugins("  (no matches)\n").is_empty());
     }
 }

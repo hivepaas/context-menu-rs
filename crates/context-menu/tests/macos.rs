@@ -32,6 +32,8 @@ impl Scratch {
         Root {
             services: self.0.join("Services"),
             status: self.0.join("status").display().to_string(),
+            data_home: self.0.join("Application Support"),
+            app: None,
         }
     }
 
@@ -90,7 +92,11 @@ fn the_menu_goes_in_and_comes_out() {
     let report = install(&menu, &root).unwrap();
     let archives = root.services.join("context-menu-test.archives.workflow");
     let folder = root.services.join("context-menu-test.folder.workflow");
-    assert_eq!(report.written, [archives.clone(), folder.clone()]);
+    let definition = context_menu::macos::definition_path("context-menu-test", &root.data_home);
+    assert_eq!(
+        report.written,
+        [archives.clone(), folder.clone(), definition.clone()]
+    );
     assert!(is_current(&menu, &root).unwrap());
 
     for bundle in [&archives, &folder] {
@@ -174,7 +180,7 @@ fn the_menu_goes_in_and_comes_out() {
     assert!(is_current(&smaller, &root).unwrap());
 
     let report = uninstall("context-menu-test", &root).unwrap();
-    assert_eq!(report.removed, std::slice::from_ref(&archives));
+    assert_eq!(report.removed, [archives.clone(), definition.clone()]);
     assert!(!archives.exists());
     assert!(
         uninstall("context-menu-test", &root)

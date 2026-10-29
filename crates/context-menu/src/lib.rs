@@ -41,7 +41,8 @@
 //! is in `docs/linux.md`; Nautilus's native extension, which an app's
 //! package installs, in `docs/nautilus.md`; Windows's classic menu, and the
 //! native extension an app's package declares for Windows 11's own, in
-//! `docs/windows.md`; Finder's Quick Actions, on macOS, in `docs/macos.md`.
+//! `docs/windows.md`; Finder's own menu, from the native extension an app's
+//! bundle holds, and its Quick Actions without one, in `docs/macos.md`.
 
 use std::fmt;
 use std::path::PathBuf;

@@ -68,7 +68,7 @@ jobs:
         # classic menu to a scratch key and loads its native extension as
         # Explorer does; macOS writes the Quick Actions to a scratch folder
         # with the file types the system knows, reads them back with pbs and
-        # runs one with automator.
+        # runs one with automator, and builds the Finder extension.
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7

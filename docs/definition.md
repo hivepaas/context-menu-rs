@@ -1,6 +1,6 @@
 # The menu definition
 
-`install` writes each menu as text, for the native extensions to read when the file manager asks what to show: on Linux in `$XDG_DATA_HOME/context-menu-rs/<menu id>.menu` (by default `~/.local/share/context-menu-rs/`). `Menu::to_definition` and `Menu::from_definition` write and read it; an app not written in Rust can write it too, and use the extensions.
+`install` writes each menu as text, for the native extensions to read when the file manager asks what to show: on Linux in `$XDG_DATA_HOME/context-menu-rs/<menu id>.menu` (by default `~/.local/share/context-menu-rs/`), on Windows in `%LOCALAPPDATA%\context-menu-rs\`, and on macOS in `~/Library/Application Support/context-menu-rs/`. `Menu::to_definition` and `Menu::from_definition` write and read it; an app not written in Rust can write it too, and use the extensions.
 
 The first line names the format and its version:
 

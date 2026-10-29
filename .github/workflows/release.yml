@@ -1,7 +1,7 @@
 name: Release
 
-# Builds the native extensions, Nautilus's and Windows's, for each
-# architecture. On a tag (vX.Y.Z), the libraries and their sums go to a draft
+# Builds the native extensions, Nautilus's and Windows's for each
+# architecture, and Finder's for both of the Mac's in one program. On a tag (vX.Y.Z), the libraries and their sums go to a draft
 # release, published by hand; run by hand, they are the run's artifacts.
 
 on:
@@ -85,10 +85,42 @@ jobs:
           path: context-menu-windows-${{ matrix.arch }}.dll*
           if-no-files-found: error
 
+  finder:
+    name: Finder extension (Apple silicon and Intel)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      # Its Info.plist asks for macOS 11, the first on Apple silicon.
+      - name: Build it for each, as one program
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --locked -p context-menu-finder --target $target
+          done
+          out=context-menu-finder-macos
+          lipo -create -output "$out" \
+            target/aarch64-apple-darwin/release/context-menu-finder \
+            target/x86_64-apple-darwin/release/context-menu-finder
+          strip -x "$out"
+          lipo -info "$out"
+          shasum -a 256 "$out" > "$out.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: finder-macos
+          path: context-menu-finder-macos*
+          if-no-files-found: error
+
   publish:
     name: Draft the release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [nautilus, windows]
+    needs: [nautilus, windows, finder]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
