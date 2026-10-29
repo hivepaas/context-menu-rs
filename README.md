@@ -2,7 +2,7 @@
 
 Put your app in the right-click menu of the system's file manager, from Rust: Windows Explorer, macOS Finder and the file managers of Linux, from one description of the menu.
 
-> **Status:** early development. Linux and Windows work. On macOS, Quick Actions are written and tested, and wait to be tried in Finder; a Finder Sync extension comes after. Nothing is published on crates.io yet.
+> **Status:** early development. Linux, Windows and macOS's Quick Actions work; a Finder Sync extension for macOS comes next. Nothing is published on crates.io yet.
 
 ## ✨ Usage
 

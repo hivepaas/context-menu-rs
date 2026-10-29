@@ -26,11 +26,12 @@ The system says this through `UTType`, from JavaScript for Automation (`osascrip
 
 ### What Quick Actions can and cannot do
 
-- **They are in Finder's Quick Actions submenu**, with any other app's and the user's, and not grouped under the menu's title: `Menu::submenu` is not used, and the report's notes say so.
+- **They are in Finder's Quick Actions submenu**, with any other app's and the user's, and not grouped under the menu's title: `Menu::submenu` is not used, and the report's notes say so. Finder orders them by their labels, not as the menu has them.
+- **The user can turn each one off**, in Quick Actions, Customize…, or in System Settings, under Keyboard, Keyboard Shortcuts, Services, Files and Folders, where they are listed.
 - **They show for any number of files chosen.** An item for `Count::One` shows for several files too, and runs with all of them; one for `Count::Many` shows for one file. The notes say so for each such item, and an app has to check what it gets.
 - **A file's type comes from its last extension.** An item for `tar.gz` shows for every `.gz` file. The notes say so.
 - **With different things chosen, an item shows only when each one is of a type it is for**, as on Linux: with a zip and a 7z chosen an item for archives shows, but not with a zip and a text file, or a zip and a folder.
-- **A type takes in those that conform to it**: the system says `.jar`'s type is a kind of zip archive, and `.tgz`'s a kind of gzip file, so an item for `zip` should show for `.jar` files, and one for `gz` for `.tgz`.
+- **A type takes in those that conform to it**: `.jar`'s type is a kind of zip archive, and `.tgz`'s a kind of gzip file, so an item for `zip` shows for `.jar` files, and one for `gz` for `.tgz`.
 - **Only in Finder**, and only for files with a path.
 - **No icons**: the items have Automator's own.
 - **The program's output goes nowhere**, since nothing waits for it.
@@ -49,14 +50,7 @@ The bundles are planned in plain Rust and tested on every system: the files writ
 
 That was on macOS 27.0.1, where the test writes the keys turning the Quick Actions on to a scratch property list, not `pbs`, and checks that one turned off stays off.
 
-On that Mac, the demo was then installed for the user and tried in Finder. Its items first showed only once turned on in Customize…, which is why `install` turns them on; with that, and the keys cleared, they showed at once after `install`. They are labelled as `Info.plist` says, not with the bundles' names. Each showed for what it applies to, as above: for a zip, a 7z or both, the archives' item and the one for anything; for a zip and a text file, or a zip and a folder, the one for anything alone. Several files chosen reached the program in one run, `it's a b.zip` as it is. When the Quick Action waited for the program, a gear turned in the menu bar until the demo's alert closed; so it does not wait any more, and then no gear showed, and the alert stayed open past a minute, until it was closed. The system's process running Quick Actions, `WorkflowServiceRunner`, was still there afterwards, so a program outliving it has not been seen: its own process group is for that.
-
-Still to check:
-
-- how Finder orders the items;
-- that an item for `zip` shows for `.jar` files and one for `gz` for `.tgz`, as their types say;
-- that Finder drops them at once after `uninstall`;
-- that System Settings lists them, under Keyboard, Keyboard Shortcuts, Services, Files and Folders, where each can be turned off.
+On that Mac, the demo was then installed for the user and tried in Finder. Its items first showed only once turned on in Customize…, which is why `install` turns them on; with that, and the keys cleared, they showed at once after `install`, and went at once after `uninstall`. They are labelled as `Info.plist` says, not with the bundles' names, and ordered by label: "Anything" before "Archives", though written after it. System Settings listed them. Each showed for what it applies to, as above: for a zip, a 7z or both, the archives' item and the one for anything, and for a `.jar` or a `.tgz` too; for a zip and a text file, or a zip and a folder, the one for anything alone. Several files chosen reached the program in one run, `it's a b.zip` as it is. When the Quick Action waited for the program, a gear turned in the menu bar until the demo's alert closed; so it does not wait any more, and then no gear showed, and the alert stayed open past a minute, until it was closed. The system's process running Quick Actions, `WorkflowServiceRunner`, was still there afterwards, so a program outliving it has not been seen: its own process group is for that.
 
 ## Not yet
 
