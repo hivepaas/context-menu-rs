@@ -119,8 +119,13 @@ pub(crate) fn parse_plugins(text: &str) -> Vec<Served> {
             };
             let mut fields = line[1..].trim_start().split('\t');
             let id = fields.next()?.rsplit_once('(')?.0.to_string();
-            let path = PathBuf::from(fields.nth(2)?);
-            path.is_absolute().then_some(Served { id, path, election })
+            // A macOS path, whatever system reads it.
+            let path = fields.nth(2).filter(|p| p.starts_with('/'))?;
+            Some(Served {
+                id,
+                path: PathBuf::from(path),
+                election,
+            })
         })
         .collect()
 }
