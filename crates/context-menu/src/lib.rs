@@ -41,8 +41,7 @@
 //! is in `docs/linux.md`; Nautilus's native extension, which an app's
 //! package installs, in `docs/nautilus.md`; Windows's classic menu, and the
 //! native extension an app's package declares for Windows 11's own, in
-//! `docs/windows.md`. macOS comes next; until then [`install`] returns
-//! [`Error::Unsupported`] there.
+//! `docs/windows.md`; Finder's Quick Actions, on macOS, in `docs/macos.md`.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -50,6 +49,7 @@ use std::path::PathBuf;
 mod definition;
 #[cfg(target_os = "linux")]
 pub mod linux;
+pub mod macos;
 pub mod windows;
 
 /// An app's items in the right-click menu.
@@ -76,7 +76,8 @@ pub struct Item {
     /// What the menu says.
     pub label: String,
     /// On Linux, an icon theme's name (such as `package-x-generic`) or an
-    /// absolute path to an image. Some file managers show none.
+    /// absolute path to an image. Some file managers show none, and neither
+    /// do Finder's Quick Actions.
     pub icon: Option<String>,
     /// What the item shows for.
     pub applies_to: AppliesTo,
@@ -368,8 +369,9 @@ fn check_label(what: &str, label: &str) -> Result<(), Error> {
 /// What [`install`] or [`uninstall`] did.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Report {
-    /// The files written, and on Windows the registry keys, as
-    /// `HKEY_CURRENT_USER\Software\Classes\…`.
+    /// The files written: on Windows the registry keys too, as
+    /// `HKEY_CURRENT_USER\Software\Classes\…`, and on macOS the bundles,
+    /// which are folders.
     pub written: Vec<PathBuf>,
     /// The files or keys taken away: an earlier install's.
     pub removed: Vec<PathBuf>,
@@ -397,7 +399,6 @@ pub enum Error {
 }
 
 impl Error {
-    #[cfg(target_os = "linux")]
     fn io(path: &std::path::Path, source: std::io::Error) -> Self {
         Error::Io {
             path: path.to_path_buf(),
@@ -438,7 +439,11 @@ pub fn install(menu: &Menu) -> Result<Report, Error> {
     {
         windows::install(menu, &windows::Root::current()?)
     }
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::install(menu, &macos::Root::current()?)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         Err(Error::Unsupported)
     }
@@ -446,7 +451,8 @@ pub fn install(menu: &Menu) -> Result<Report, Error> {
 
 /// Whether `menu` is installed for the current user as [`install`] would
 /// install it now: false when it is not, when it changed, or when what the
-/// system offers did (such as nautilus-python, added or removed since).
+/// system offers did (such as nautilus-python, added or removed since, or
+/// on macOS an app declaring a file type for one of its extensions).
 /// Cheap enough to call when the app starts, and [`install`] when false.
 pub fn is_current(menu: &Menu) -> Result<bool, Error> {
     menu.validate()?;
@@ -458,7 +464,11 @@ pub fn is_current(menu: &Menu) -> Result<bool, Error> {
     {
         windows::is_current(menu, &windows::Root::current()?)
     }
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::is_current(menu, &macos::Root::current()?)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         Err(Error::Unsupported)
     }
@@ -476,7 +486,11 @@ pub fn uninstall(id: &str) -> Result<Report, Error> {
     {
         windows::uninstall(id, &windows::Root::current()?)
     }
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::uninstall(id, &macos::Root::current()?)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         Err(Error::Unsupported)
     }

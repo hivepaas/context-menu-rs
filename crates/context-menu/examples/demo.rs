@@ -1,7 +1,7 @@
 //! Puts a demo menu in the file manager, whose items run this program again
 //! with the paths chosen; it shows them in a notification where
-//! `notify-send` is, or a message box on Windows, and writes them to
-//! `context-menu-demo.log` in the temporary folder.
+//! `notify-send` is, a message box on Windows or an alert on macOS, and
+//! writes them to `context-menu-demo.log` in the temporary folder.
 //!
 //! ```text
 //! cargo run --example demo -- install
@@ -161,8 +161,9 @@ fn run(args: &[String]) {
     show(&text);
 }
 
-/// Shows `text` in a notification, or on Windows a message box; with
-/// `CONTEXT_MENU_DEMO_QUIET` set, as for tests with no screen, not at all.
+/// Shows `text` in a notification, on Windows a message box, or on macOS an
+/// alert; with `CONTEXT_MENU_DEMO_QUIET` set, as for tests with no screen,
+/// not at all.
 fn show(text: &str) {
     if std::env::var_os("CONTEXT_MENU_DEMO_QUIET").is_some() {
         return;
@@ -174,6 +175,14 @@ fn show(text: &str) {
                 "-Command",
                 "Add-Type -AssemblyName PresentationFramework; \
                  [System.Windows.MessageBox]::Show($env:DEMO_TEXT, 'context-menu demo') | Out-Null",
+            ])
+            .env("DEMO_TEXT", text)
+            .status();
+    } else if cfg!(target_os = "macos") {
+        let _ = std::process::Command::new("/usr/bin/osascript")
+            .args([
+                "-e",
+                "display alert \"context-menu demo\" message (system attribute \"DEMO_TEXT\")",
             ])
             .env("DEMO_TEXT", text)
             .status();
