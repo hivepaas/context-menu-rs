@@ -1,16 +1,105 @@
-//! What macOS says and is told: the file types of files with each
+//! What macOS says and is told: which Finder extension serves a menu, and
+//! that one is there or should be on; the file types of files with each
 //! extension, from its type database; which Quick Actions are turned on;
 //! and that the Services folder changed.
 
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
-use super::{Types, xml};
+use super::{EXTENSION_PATH, MENU_KEY, Served, Types, parse_plugins, xml};
 use crate::Error;
 
 const OSASCRIPT: &str = "/usr/bin/osascript";
 const DEFAULTS: &str = "/usr/bin/defaults";
+const PLUGINKIT: &str = "/usr/bin/pluginkit";
+const PLUTIL: &str = "/usr/bin/plutil";
+const LSREGISTER: &str = "/System/Library/Frameworks/CoreServices.framework/Frameworks/\
+                          LaunchServices.framework/Support/lsregister";
+
+/// The Finder extension serving the menu `id`, as the system knows it: the
+/// one whose `Info.plist` names the menu, with the user's election.
+pub(super) fn served(id: &str) -> Option<Served> {
+    let out = Command::new(PLUGINKIT)
+        .args(["-m", "-v", "-p", "com.apple.FinderSync"])
+        .arg(format!("{MENU_KEY}={id}"))
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    parse_plugins(&String::from_utf8_lossy(&out.stdout))
+        .into_iter()
+        .next()
+}
+
+/// Whether the app bundle `app` holds the extension serving the menu `id`.
+pub(super) fn bundled(id: &str, app: &Path) -> bool {
+    let info = app.join(EXTENSION_PATH).join("Contents/Info.plist");
+    if !info.is_file() {
+        return false;
+    }
+    Command::new(PLUTIL)
+        .args(["-extract", MENU_KEY, "raw", "-o", "-"])
+        .arg(&info)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim_end() == id)
+}
+
+/// Tells the system of the extension serving the menu `id` in the app
+/// bundle `app`, when it holds one, as it learns of apps in the
+/// Applications folder by itself: LaunchServices first, which PlugInKit
+/// needs, then PlugInKit. True when the system then knows it.
+pub(super) fn register(id: &str, app: &Path) -> bool {
+    if !bundled(id, app) {
+        return false;
+    }
+    let run = |command: &mut Command| {
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    };
+    if !(run(Command::new(LSREGISTER).args(["-f", "-R"]).arg(app))
+        && run(Command::new(PLUGINKIT)
+            .arg("-a")
+            .arg(app.join(EXTENSION_PATH))))
+    {
+        return false;
+    }
+    // PlugInKit takes the extension in a moment later.
+    for _ in 0..20 {
+        if served(id).is_some() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    false
+}
+
+/// Turns on the extension `id`, as System Settings does when the user does.
+pub(super) fn turn_on_extension(id: &str) -> Result<(), Error> {
+    let out = Command::new(PLUGINKIT)
+        .args(["-e", "use", "-i", id])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|source| Error::Io {
+            path: PathBuf::from(PLUGINKIT),
+            source,
+        })?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(Error::Io {
+            path: PathBuf::from(PLUGINKIT),
+            source: io::Error::other(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+        })
+    }
+}
 
 /// For each argument, `.` and an extension, a line: the extension, and the
 /// types a file with it may have, all separated by tabs. The first is what

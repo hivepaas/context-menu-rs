@@ -11,11 +11,16 @@
 //! The menu runs the program where cargo built it, so keep it there while
 //! trying the menu. On Windows 11, `demo manifest` writes the manifest of a
 //! package for the demo, declaring the native extension, which
-//! `scripts/windows/demo-package.ps1` registers: see `docs/windows.md`.
+//! `scripts/windows/demo-package.ps1` registers: see `docs/windows.md`. On
+//! macOS, `demo bundle <app> <team>` writes the `Info.plist`s of the demo as
+//! an app holding the native extension, and their entitlements beside it,
+//! which `scripts/macos/demo-app.sh` builds and signs: see `docs/macos.md`.
 
 use std::io::Write as _;
+use std::path::Path;
 use std::process::ExitCode;
 
+use context_menu::macos::FinderExtension;
 use context_menu::{Count, Item, Menu};
 
 fn main() -> ExitCode {
@@ -25,6 +30,18 @@ fn main() -> ExitCode {
         Some("uninstall") => context_menu::uninstall("context-menu-demo").map(|r| {
             println!("removed {} files", r.removed.len());
         }),
+        Some("status") => menu()
+            .and_then(|m| context_menu::is_current(&m))
+            .map(|current| {
+                println!(
+                    "{}",
+                    if current {
+                        "current"
+                    } else {
+                        "to install again"
+                    }
+                );
+            }),
         Some("run") => {
             run(&args[1..]);
             Ok(())
@@ -33,8 +50,9 @@ fn main() -> ExitCode {
             print!("{}", manifest());
             Ok(())
         }
+        Some("bundle") if args.len() == 3 => bundle(Path::new(&args[1]), &args[2]),
         _ => {
-            eprintln!("usage: demo install | uninstall | manifest");
+            eprintln!("usage: demo install | uninstall | status | manifest | bundle <app> <team>");
             return ExitCode::from(2);
         }
     };
@@ -48,11 +66,23 @@ fn main() -> ExitCode {
 }
 
 fn install() -> Result<(), context_menu::Error> {
+    let report = context_menu::install(&menu()?)?;
+    for path in &report.written {
+        println!("wrote {}", path.display());
+    }
+    for note in &report.notes {
+        println!("note: {note}");
+    }
+    Ok(())
+}
+
+/// The demo's menu, whose items run this program.
+fn menu() -> Result<Menu, context_menu::Error> {
     let me = std::env::current_exe().map_err(|e| context_menu::Error::Io {
         path: "the demo itself".into(),
         source: e,
     })?;
-    let menu = Menu::new("context-menu-demo", "context-menu demo")
+    Ok(Menu::new("context-menu-demo", "context-menu demo")
         .submenu(true)
         .icon(icon("applications-utilities", "explorer.exe,0"))
         .item(
@@ -73,15 +103,7 @@ fn install() -> Result<(), context_menu::Error> {
                 .icon(icon("folder", r"System32\shell32.dll,3"))
                 .folders_only()
                 .count(Count::One),
-        );
-    let report = context_menu::install(&menu)?;
-    for path in &report.written {
-        println!("wrote {}", path.display());
-    }
-    for note in &report.notes {
-        println!("note: {note}");
-    }
-    Ok(())
+        ))
 }
 
 /// The manifest of a package for the demo, as an app's has it: the app's
@@ -131,6 +153,82 @@ fn manifest() -> String {
 </Package>
 "#
     )
+}
+
+/// Writes the `Info.plist`s of the demo as the app `app`, holding the native
+/// extension and its helper, signed by the team `team`; and beside the app,
+/// the extension's and the helper's entitlements, to sign them with.
+fn bundle(app: &Path, team: &str) -> Result<(), context_menu::Error> {
+    let finder = FinderExtension::new(
+        "context-menu-demo",
+        "com.hivepaas.context-menu-demo",
+        team,
+        "context-menu demo",
+    );
+    let beside = app.parent().unwrap_or(Path::new("."));
+    let files = [
+        (app.join("Contents/Info.plist"), app_plist()),
+        (
+            app.join(context_menu::macos::EXTENSION_PATH)
+                .join("Contents/Info.plist"),
+            finder.extension_plist(),
+        ),
+        (
+            app.join(context_menu::macos::HELPER_PATH)
+                .join("Contents/Info.plist"),
+            finder.helper_plist(),
+        ),
+        (
+            beside.join("extension.entitlements"),
+            finder.extension_entitlements(),
+        ),
+        (
+            beside.join("helper.entitlements"),
+            finder.helper_entitlements(),
+        ),
+    ];
+    for (path, text) in files {
+        let dir = path.parent().unwrap_or(Path::new("."));
+        std::fs::create_dir_all(dir)
+            .and_then(|()| std::fs::write(&path, text))
+            .map_err(|source| context_menu::Error::Io {
+                path: path.clone(),
+                source,
+            })?;
+        println!("wrote {}", path.display());
+    }
+    Ok(())
+}
+
+/// The demo app's own `Info.plist`: an app with no Dock icon, whose program
+/// is the demo.
+fn app_plist() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.hivepaas.context-menu-demo</string>
+	<key>CFBundleExecutable</key>
+	<string>demo</string>
+	<key>CFBundleName</key>
+	<string>context-menu demo</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>LSUIElement</key>
+	<true/>
+</dict>
+</plist>
+"#
+    .to_string()
 }
 
 /// An icon: a theme's name on Linux; on Windows, one of its own, in a file

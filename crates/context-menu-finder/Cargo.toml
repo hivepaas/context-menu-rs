@@ -1,0 +1,65 @@
+[package]
+name = "context-menu-finder"
+version = "0.0.0"
+description = "A Finder Sync extension showing a context-menu-rs menu in Finder's own menu: built once, held in each app's bundle"
+readme = "../../docs/macos.md"
+keywords = ["macos", "finder", "context-menu", "finder-sync"]
+categories = ["os::macos-apis"]
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[[bin]]
+name = "context-menu-finder"
+path = "src/main.rs"
+
+[dependencies]
+context-menu = { path = "../context-menu" }
+
+# Finder Sync, AppKit and Foundation, through objc2; getpwuid, for the
+# user's home from inside the sandbox.
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+libc = "0.2"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "std",
+  "block2",
+  "NSMenu",
+  "NSMenuItem",
+  "NSRunningApplication",
+  "NSWorkspace",
+] }
+objc2-finder-sync = "0.3"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+  "std",
+  "block2",
+  "NSArray",
+  "NSEnumerator",
+  "NSBundle",
+  "NSError",
+  "NSFileManager",
+  "NSNotification",
+  "NSOperation",
+  "NSSet",
+  "NSString",
+  "NSURL",
+] }
+
+# The workspace's lints, but `unsafe_code` is `deny` rather than `forbid`:
+# Finder's interface is Objective-C, and src/ffi.rs allows it there alone.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
