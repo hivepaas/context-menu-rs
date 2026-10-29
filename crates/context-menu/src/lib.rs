@@ -77,8 +77,11 @@ pub struct Item {
     /// What the menu says.
     pub label: String,
     /// On Linux, an icon theme's name (such as `package-x-generic`) or an
-    /// absolute path to an image. Some file managers show none, and neither
-    /// do Finder's Quick Actions.
+    /// absolute path to an image. On Windows, an `.ico` file, or an `.exe`
+    /// or `.dll` and an index (`app.exe,0`). On macOS, an SF Symbol's name
+    /// (such as `archivebox`), one of AppKit's named images (`NSFolder`), or
+    /// an absolute path to an image. Some file managers show none, and
+    /// Finder's Quick Actions no symbols.
     pub icon: Option<String>,
     /// What the item shows for.
     pub applies_to: AppliesTo,

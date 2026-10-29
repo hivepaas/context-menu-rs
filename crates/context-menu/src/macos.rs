@@ -82,6 +82,130 @@ pub fn definition_path(id: &str, data_home: &Path) -> PathBuf {
     data_home.join("context-menu-rs").join(format!("{id}.menu"))
 }
 
+/// Where the copies of the menu `id`'s icon files go in `data_home`, beside
+/// its definition: the extension, in the sandbox, can read there, and not
+/// in the app's bundle.
+pub fn icons_path(id: &str, data_home: &Path) -> PathBuf {
+    data_home.join("context-menu-rs").join(id)
+}
+
+/// The icon files `menu` names, by absolute path, and where each is copied:
+/// `menu.<extension>` for the menu's, `item.<item>.<extension>` for an
+/// item's. Ids hold no `.`, so no two are named alike.
+fn icon_copies(menu: &Menu, root: &Root) -> Vec<(PathBuf, PathBuf)> {
+    let dir = icons_path(&menu.id, &root.data_home);
+    let named = std::iter::once(("menu".to_string(), menu.icon.as_ref())).chain(
+        menu.items
+            .iter()
+            .map(|i| (format!("item.{}", i.id), i.icon.as_ref())),
+    );
+    named
+        .filter_map(|(name, icon)| {
+            let source = PathBuf::from(icon?.as_str());
+            if !source.is_absolute() {
+                return None;
+            }
+            let copy = match source.extension().and_then(|e| e.to_str()) {
+                Some(extension) => dir.join(format!("{name}.{}", extension.to_lowercase())),
+                None => dir.join(name),
+            };
+            Some((source, copy))
+        })
+        .collect()
+}
+
+/// `menu` as its definition has it on macOS: its icon files' copies in
+/// place of them.
+fn as_defined(menu: &Menu, root: &Root) -> Menu {
+    let copies = icon_copies(menu, root);
+    let copy = |icon: &Option<String>| {
+        icon.as_ref().map(|icon| {
+            copies
+                .iter()
+                .find(|(source, _)| source.as_os_str() == icon.as_str())
+                .map_or_else(|| icon.clone(), |(_, copy)| copy.display().to_string())
+        })
+    };
+    let mut defined = menu.clone();
+    defined.icon = copy(&menu.icon);
+    for item in &mut defined.items {
+        item.icon = copy(&item.icon);
+    }
+    defined
+}
+
+/// Copies the icon files of `menu` beside its definition, those that changed
+/// since an earlier install, and removes the copies it no longer names. A
+/// file that cannot be read gets no copy, and so shows no icon, with a note.
+fn copy_icons(menu: &Menu, root: &Root, report: &mut Report) -> Result<(), Error> {
+    let copies = icon_copies(menu, root);
+    let dir = icons_path(&menu.id, &root.data_home);
+    for (source, copy) in &copies {
+        let Ok(bytes) = fs::read(source) else {
+            report.notes.push(format!(
+                "Finder: the icon {} cannot be read, so it does not show.",
+                source.display()
+            ));
+            remove(copy).map_err(|e| Error::io(copy, e))?;
+            continue;
+        };
+        if fs::read(copy).is_ok_and(|there| there == bytes) {
+            continue;
+        }
+        let tmp = dir.join(format!(
+            ".{}.tmp",
+            copy.file_name().unwrap_or_default().display()
+        ));
+        let result = fs::create_dir_all(&dir)
+            .and_then(|()| fs::write(&tmp, &bytes))
+            .and_then(|()| fs::rename(&tmp, copy));
+        result.map_err(|e| {
+            let _ = fs::remove_file(&tmp);
+            Error::io(copy, e)
+        })?;
+        report.written.push(copy.clone());
+    }
+    for path in list(&dir)? {
+        if !copies.iter().any(|(_, copy)| *copy == path) {
+            remove(&path).map_err(|e| Error::io(&path, e))?;
+            report.removed.push(path);
+        }
+    }
+    if copies.is_empty() {
+        let _ = fs::remove_dir(&dir);
+    }
+    Ok(())
+}
+
+/// Whether the copies of `menu`'s icon files are there as they are now, and
+/// no others.
+fn icons_current(menu: &Menu, root: &Root) -> Result<bool, Error> {
+    let copies = icon_copies(menu, root);
+    let mut there = list(&icons_path(&menu.id, &root.data_home))?;
+    there.sort();
+    let mut wanted: Vec<PathBuf> = copies
+        .iter()
+        .filter(|(source, _)| source.is_file())
+        .map(|(_, copy)| copy.clone())
+        .collect();
+    wanted.sort();
+    Ok(there == wanted
+        && copies
+            .iter()
+            .all(|(source, copy)| fs::read(source).ok() == fs::read(copy).ok()))
+}
+
+/// The entries of `dir`, or none when it is not there.
+fn list(dir: &Path) -> Result<Vec<PathBuf>, Error> {
+    match fs::read_dir(dir) {
+        Ok(entries) => entries
+            .map(|e| e.map(|e| e.path()).map_err(|err| Error::io(dir, err)))
+            .collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(Error::io(dir, e)),
+    }
+}
+
 /// A Finder extension serving a menu, as the system knows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Served {
@@ -145,15 +269,15 @@ fn served_note(served: &Served) -> String {
     }
 }
 
-/// Writes the definition of `menu` under `root` whole: to a hidden file
-/// beside it first, then renamed over it, so the extension never reads half
-/// of it.
+/// Writes the definition of `menu` under `root` whole, with its icon files'
+/// copies: to a hidden file beside it first, then renamed over it, so the
+/// extension never reads half of it.
 fn write_definition(menu: &Menu, root: &Root) -> Result<PathBuf, Error> {
     let path = definition_path(&menu.id, &root.data_home);
     let dir = path.parent().unwrap_or(&root.data_home);
     let tmp = dir.join(format!(".{}.menu.tmp", menu.id));
     let result = fs::create_dir_all(dir)
-        .and_then(|()| fs::write(&tmp, menu.to_definition()))
+        .and_then(|()| fs::write(&tmp, as_defined(menu, root).to_definition()))
         .and_then(|()| fs::rename(&tmp, &path));
     result.map_err(|e| {
         let _ = fs::remove_file(&tmp);
@@ -167,13 +291,55 @@ fn write_definition(menu: &Menu, root: &Root) -> Result<PathBuf, Error> {
 /// each, the types a file so named may have.
 pub(crate) type Types = BTreeMap<String, Vec<String>>;
 
-/// A Quick Action: the bundle's name, and its two files.
+/// A Quick Action: the bundle's name, and its two files; and the image file
+/// it shows as its icon, copied into it as `Contents/Resources/icon.<ext>`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Bundle {
     pub name: String,
     pub label: String,
     pub info: String,
     pub document: String,
+    pub icon: Option<PathBuf>,
+}
+
+/// What a Quick Action has for an icon: the name `Info.plist` gives it, and
+/// the image file copied into the bundle under that name. Finder shows an
+/// image in the bundle, and AppKit's named images (`NSFolder`), but not the
+/// system's symbols: for those it shows a blank document, worse than the
+/// default, so they are left out, with a note.
+fn quick_icon(item: &Item, notes: &mut Vec<String>) -> (String, Option<PathBuf>) {
+    const DEFAULT: &str = "NSActionTemplate";
+    let Some(icon) = &item.icon else {
+        return (DEFAULT.into(), None);
+    };
+    let path = Path::new(icon);
+    if path.is_absolute() {
+        if path.is_file() {
+            return ("icon".into(), Some(path.to_path_buf()));
+        }
+        notes.push(format!(
+            "Finder: the icon {icon} cannot be read, so {:?} has the default one.",
+            item.label
+        ));
+    } else if icon.starts_with("NS") && fits(icon) {
+        return (icon.clone(), None);
+    } else {
+        notes.push(format!(
+            "Finder: Quick Actions show no symbols, so {:?} has the default icon, not \
+             {icon:?}.",
+            item.label
+        ));
+    }
+    (DEFAULT.into(), None)
+}
+
+/// The name the image file copied into a bundle has there: `icon` and its
+/// extension, which says its kind.
+fn icon_file(source: &Path) -> String {
+    match source.extension().and_then(|e| e.to_str()) {
+        Some(extension) => format!("icon.{}", extension.to_lowercase()),
+        None => "icon".into(),
+    }
 }
 
 /// The last extension of `ext`, the one macOS knows a file by: `gz` for
@@ -234,11 +400,13 @@ pub(crate) fn plan(menu: &Menu, types: &Types) -> (Vec<Bundle>, Vec<String>) {
             )),
             Count::Any => {}
         }
+        let (icon_name, icon) = quick_icon(item, &mut notes);
         bundles.push(Bundle {
             name: format!("{}.{}.workflow", menu.id, item.id),
             label: item.label.clone(),
-            info: info(menu, item, &file_types),
+            info: info(menu, item, &file_types, &icon_name),
             document: document(item),
+            icon,
         });
     }
     (bundles, notes)
@@ -330,7 +498,7 @@ fn command(item: &Item) -> String {
 
 /// The bundle's `Info.plist`: the service, as Automator declares a Quick
 /// Action, for Finder alone and the types given; and the menu's mark.
-fn info(menu: &Menu, item: &Item, file_types: &[String]) -> String {
+fn info(menu: &Menu, item: &Item, file_types: &[String], icon: &str) -> String {
     let mut types = String::new();
     for t in file_types {
         let _ = writeln!(types, "\t\t\t\t<string>{}</string>", xml(t));
@@ -348,7 +516,7 @@ fn info(menu: &Menu, item: &Item, file_types: &[String]) -> String {
 			<key>NSBackgroundColorName</key>
 			<string>background</string>
 			<key>NSIconName</key>
-			<string>NSActionTemplate</string>
+			<string>{icon}</string>
 			<key>NSMenuItem</key>
 			<dict>
 				<key>default</key>
@@ -371,6 +539,7 @@ fn info(menu: &Menu, item: &Item, file_types: &[String]) -> String {
 "#,
         id = menu.id,
         label = xml(&item.label),
+        icon = xml(icon),
     )
 }
 
@@ -644,6 +813,11 @@ fn write(bundle: &Bundle, dir: &Path) -> Result<PathBuf, Error> {
         fs::create_dir_all(&contents)?;
         fs::write(contents.join("Info.plist"), &bundle.info)?;
         fs::write(contents.join("document.wflow"), &bundle.document)?;
+        if let Some(source) = &bundle.icon {
+            let resources = contents.join("Resources");
+            fs::create_dir_all(&resources)?;
+            fs::copy(source, resources.join(icon_file(source)))?;
+        }
         remove(&path)?;
         fs::rename(&tmp, &path)
     })();
@@ -701,18 +875,23 @@ pub(crate) fn install_with(
     for bundle in &bundles {
         report.written.push(write(bundle, &root.services)?);
     }
+    copy_icons(menu, root, &mut report)?;
     report.written.push(write_definition(menu, root)?);
     Ok(report)
 }
 
-/// Takes the bundles and the definition of the menu `id` away from under
-/// `root`.
+/// Takes the bundles, the definition and the icons' copies of the menu
+/// `id` away from under `root`.
 pub(crate) fn uninstall_from(id: &str, root: &Root) -> Result<Report, Error> {
     let mut report = Report::default();
-    let definition = definition_path(id, &root.data_home);
     let mut paths = existing(id, root)?;
-    if fs::symlink_metadata(&definition).is_ok() {
-        paths.push(definition);
+    for path in [
+        definition_path(id, &root.data_home),
+        icons_path(id, &root.data_home),
+    ] {
+        if fs::symlink_metadata(&path).is_ok() {
+            paths.push(path);
+        }
     }
     for path in paths {
         remove(&path).map_err(|e| Error::io(&path, e))?;
@@ -735,7 +914,9 @@ pub(crate) fn is_current_with(
         return Ok(false);
     }
     let definition = fs::read_to_string(definition_path(&menu.id, &root.data_home));
-    if definition.ok().as_deref() != Some(menu.to_definition().as_str()) {
+    if definition.ok().as_deref() != Some(as_defined(menu, root).to_definition().as_str())
+        || !icons_current(menu, root)?
+    {
         return Ok(false);
     }
     let (bundles, _) = wanted(menu, types, served);
@@ -751,8 +932,17 @@ pub(crate) fn is_current_with(
     Ok(bundles.iter().all(|b| {
         let contents = root.services.join(&b.name).join("Contents");
         let read = |name: &str| fs::read_to_string(contents.join(name)).ok();
+        let resources: Vec<PathBuf> = list(&contents.join("Resources")).unwrap_or_default();
+        let icon = match &b.icon {
+            Some(source) => {
+                let copy = contents.join("Resources").join(icon_file(source));
+                resources == [copy.clone()] && fs::read(source).ok() == fs::read(&copy).ok()
+            }
+            None => resources.is_empty(),
+        };
         read("Info.plist").as_deref() == Some(b.info.as_str())
             && read("document.wflow").as_deref() == Some(b.document.as_str())
+            && icon
     }))
 }
 
@@ -762,16 +952,18 @@ mod system;
 /// Installs `menu` under `root`, in place of an earlier install: its
 /// definition, and, when no extension serves it, its Quick Actions, with the
 /// file types the system knows for its extensions now. An extension serving
-/// it is told of to the system when `root.app` holds it and the system does
-/// not know it yet, and turned on, as are the Quick Actions, when the user
-/// has not turned it on or off.
+/// it in `root.app` is told of to the system, and turned on, as are the
+/// Quick Actions, when the user has not turned it on or off.
 #[cfg(target_os = "macos")]
 pub fn install(menu: &Menu, root: &Root) -> Result<Report, Error> {
     menu.validate()?;
-    let served = system::served(&menu.id).or_else(|| {
-        let app = root.app.as_deref()?;
-        system::register(&menu.id, app).then(|| system::served(&menu.id))?
-    });
+    // The app's own extension is told of again each time: once the app is
+    // replaced, by an update, the system's record of it may be gone, or
+    // about to go.
+    if let Some(app) = root.app.as_deref() {
+        system::register(&menu.id, app);
+    }
+    let served = system::served(&menu.id);
     let types = match served {
         Some(_) => Types::new(),
         None => system::types(&extensions(menu))?,
@@ -1116,6 +1308,137 @@ mod tests {
         assert!(!is_current_with(&menu(true), &r, &types(), None).unwrap());
         install_with(&menu(true), &r, &types(), None).unwrap();
         assert_eq!(existing("packwing", &r).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn icon_files_are_copied_where_the_extension_can_read_them() {
+        let r = root("icons");
+        let resources = r
+            .data_home
+            .parent()
+            .unwrap()
+            .join("Pack Wing.app/Resources");
+        fs::create_dir_all(&resources).unwrap();
+        let zip = resources.join("zip.PNG");
+        let folder = resources.join("folder.icns");
+        fs::write(&zip, "png 1").unwrap();
+        fs::write(&folder, "icns").unwrap();
+        let menu = |zip_icon: bool| {
+            let mut extract = Item::new("extract", "Extract", APP).extensions(["zip"]);
+            if zip_icon {
+                extract = extract.icon(zip.display().to_string());
+            }
+            Menu::new("packwing", "Pack Wing")
+                .submenu(true)
+                .icon(folder.display().to_string())
+                .item(extract)
+                .item(Item::new("menu", "Other", APP).icon("archivebox"))
+        };
+        let on = served(Election::On);
+        let icons = icons_path("packwing", &r.data_home);
+        let menu_copy = icons.join("menu.icns");
+        let zip_copy = icons.join("item.extract.png");
+
+        let report = install_with(&menu(true), &r, &types(), Some(&on)).unwrap();
+        assert!(report.written.contains(&menu_copy) && report.written.contains(&zip_copy));
+        assert_eq!(fs::read_to_string(&zip_copy).unwrap(), "png 1");
+        // The definition names the copies, and the symbol as it is.
+        let defined = Menu::from_definition(
+            &fs::read_to_string(definition_path("packwing", &r.data_home)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(defined.icon, Some(menu_copy.display().to_string()));
+        assert_eq!(defined.items[0].icon, Some(zip_copy.display().to_string()));
+        assert_eq!(defined.items[1].icon.as_deref(), Some("archivebox"));
+        assert!(is_current_with(&menu(true), &r, &types(), Some(&on)).unwrap());
+
+        // The app's icon changed: copied again, and only it.
+        fs::write(&zip, "png 2").unwrap();
+        assert!(!is_current_with(&menu(true), &r, &types(), Some(&on)).unwrap());
+        let report = install_with(&menu(true), &r, &types(), Some(&on)).unwrap();
+        assert!(report.written.contains(&zip_copy) && !report.written.contains(&menu_copy));
+        assert_eq!(fs::read_to_string(&zip_copy).unwrap(), "png 2");
+
+        // An icon no longer named: its copy goes.
+        let report = install_with(&menu(false), &r, &types(), Some(&on)).unwrap();
+        assert_eq!(report.removed, std::slice::from_ref(&zip_copy));
+        assert!(is_current_with(&menu(false), &r, &types(), Some(&on)).unwrap());
+
+        // An icon that cannot be read: no copy, a note, and still current.
+        fs::remove_file(&folder).unwrap();
+        let report = install_with(&menu(false), &r, &types(), Some(&on)).unwrap();
+        assert!(!menu_copy.exists());
+        assert!(
+            report.notes.iter().any(|n| n.contains("cannot be read")),
+            "{:?}",
+            report.notes
+        );
+        assert!(is_current_with(&menu(false), &r, &types(), Some(&on)).unwrap());
+
+        // Uninstall takes the copies too.
+        fs::write(&folder, "icns").unwrap();
+        install_with(&menu(true), &r, &types(), Some(&on)).unwrap();
+        let report = uninstall_from("packwing", &r).unwrap();
+        assert!(report.removed.contains(&icons));
+        assert!(!icons.exists());
+    }
+
+    #[test]
+    fn quick_actions_show_image_files_and_appkits_images() {
+        let r = root("quick-icons");
+        let zip = r.data_home.parent().unwrap().join("zip.PNG");
+        fs::write(&zip, "png 1").unwrap();
+        let menu = Menu::new("packwing", "Pack Wing")
+            .item(Item::new("file", "File", APP).icon(zip.display().to_string()))
+            .item(Item::new("named", "Named", APP).icon("NSFolder"))
+            .item(Item::new("symbol", "Symbol", APP).icon("archivebox"))
+            .item(
+                Item::new("gone", "Gone", APP)
+                    .icon(zip.with_file_name("gone.png").display().to_string()),
+            );
+        let (bundles, notes) = plan(&menu, &types());
+        let icon = |b: &Bundle, name: &str| {
+            b.info.contains(&format!(
+                "\t\t\t<key>NSIconName</key>\n\t\t\t<string>{name}</string>\n"
+            ))
+        };
+        assert!(icon(&bundles[0], "icon") && bundles[0].icon.as_deref() == Some(zip.as_path()));
+        assert!(icon(&bundles[1], "NSFolder") && bundles[1].icon.is_none());
+        assert!(icon(&bundles[2], "NSActionTemplate") && bundles[2].icon.is_none());
+        assert!(icon(&bundles[3], "NSActionTemplate"));
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("Quick Actions show no symbols, so \"Symbol\""))
+        );
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("cannot be read, so \"Gone\""))
+        );
+
+        install_with(&menu, &r, &types(), None).unwrap();
+        let resources = r.services.join("packwing.file.workflow/Contents/Resources");
+        assert_eq!(
+            fs::read_to_string(resources.join("icon.png")).unwrap(),
+            "png 1"
+        );
+        assert!(
+            !r.services
+                .join("packwing.named.workflow/Contents/Resources")
+                .exists()
+        );
+        assert!(is_current_with(&menu, &r, &types(), None).unwrap());
+
+        // The app's icon changed: not current, and copied again.
+        fs::write(&zip, "png 2").unwrap();
+        assert!(!is_current_with(&menu, &r, &types(), None).unwrap());
+        install_with(&menu, &r, &types(), None).unwrap();
+        assert_eq!(
+            fs::read_to_string(resources.join("icon.png")).unwrap(),
+            "png 2"
+        );
+        assert!(is_current_with(&menu, &r, &types(), None).unwrap());
     }
 
     #[test]

@@ -36,7 +36,7 @@ What the menu shows:
 - **A submenu with the menu's title** and its items, or, without `Menu::submenu`, the items themselves, right after Quick Actions.
 - **Each item for what it applies to, all of it** (`AppliesTo::accepts`): `Count::One` and `Count::Many` count what is chosen, `tar.gz` is told from `gz`, and with a zip and a folder chosen an item for archives does not show. The folders Finder shows as files, apps and documents that are packages, count as files. Nothing shows when no item applies.
 - **One run with every path**, as everywhere.
-- **No icons** yet.
+- **Icons**, the menu's and the items': an SF Symbol's name (`archivebox`), one of AppKit's named images (`NSFolder`), or an absolute path to an image file. The sandbox lets the extension read no app's bundle, so `install` copies the image files beside the definition, in `~/Library/Application Support/context-menu-rs/<menu>/`, when they changed, and the definition names the copies; `is_current` compares them with the files, and `uninstall` removes them.
 
 ### For packagers
 
@@ -98,7 +98,7 @@ The system says this through `UTType`, from JavaScript for Automation (`osascrip
 - **With different things chosen, an item shows only when each one is of a type it is for**, as on Linux: with a zip and a 7z chosen an item for archives shows, but not with a zip and a text file, or a zip and a folder.
 - **A type takes in those that conform to it**: `.jar`'s type is a kind of zip archive, and `.tgz`'s a kind of gzip file, so an item for `zip` shows for `.jar` files, and one for `gz` for `.tgz`.
 - **Only in Finder**, and only for files with a path.
-- **No icons**: the items have Automator's own.
+- **Icons**: an image file, which `install` copies into the bundle, `Contents/Resources/icon.<ext>`, and `Info.plist` names (`NSIconName`), or one of AppKit's named images (`NSFolder`). Not an SF Symbol: Finder shows a blank document for one, so the item keeps Automator's own icon, and the notes say so. An image given by its path, or put in the workflow as data, shows nothing either.
 - **The program's output goes nowhere**, since nothing waits for it.
 
 ## Trying it
@@ -131,6 +131,8 @@ Choosing an item ran the demo with the paths, through a request in the app group
 
 The app built again at the same place, the system took the new extension by itself, still on; when a trial's extension was lost to the system instead, telling the system again, LaunchServices first, brought it back, still on.
 
+The icons showed in the extension's menu, the submenu's and the items', from an SF Symbol, from one of AppKit's named images, and from image files, in the system's folders or the app's bundle, once copied beside the definition: the extension could not read the app's bundle itself. In Quick Actions, an image file in the bundle and AppKit's `NSFolder` showed; an SF Symbol showed a blank document, and an image's path or data nothing.
+
 Not tried yet: notarizing an app with the extension, an Intel Mac, and macOS before 27.
 
 ### Quick Actions
@@ -147,6 +149,5 @@ On that Mac, the demo was then installed for the user and tried in Finder. Its i
 
 ## Not yet
 
-- **Icons** in the extension's menu.
 - **The menu of a folder's background**, which Finder asks the extension for too: as on Linux and Windows, items are for what is chosen.
 - Apple says a Finder Sync extension is meant for folders an app syncs, not every folder; this one watches every folder, as other apps' do, and that has worked so far.
