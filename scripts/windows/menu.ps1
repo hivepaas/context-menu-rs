@@ -11,7 +11,8 @@
 .NOTES
   The files must be in one folder, as a selection in Explorer is, and the
   menu is the first one's, as Explorer's is the one right-clicked. Items are
-  printed one per line, a submenu's indented under it.
+  printed one per line, a submenu's indented under it, and [icon] after
+  those with one.
 #>
 param(
     [Parameter(Mandatory = $true, Position = 0)] [string[]] $Paths,
@@ -97,7 +98,7 @@ public static class ShellMenu
         [PreserveSig] int HandleMenuMsg2(uint msg, IntPtr wParam, IntPtr lParam, out IntPtr result);
     }
 
-    const uint First = 1, MIIM_ID = 2, MIIM_SUBMENU = 4, MIIM_STRING = 0x40, MIIM_FTYPE = 0x100;
+    const uint First = 1, MIIM_ID = 2, MIIM_SUBMENU = 4, MIIM_CHECKMARKS = 8, MIIM_STRING = 0x40, MIIM_BITMAP = 0x80, MIIM_FTYPE = 0x100;
     const uint MFT_SEPARATOR = 0x800, WM_INITMENUPOPUP = 0x117, CMIC_MASK_UNICODE = 0x4000;
 
     static IContextMenu2 Menu(string[] paths)
@@ -123,7 +124,7 @@ public static class ShellMenu
         int n = GetMenuItemCount(menu);
         for (uint i = 0; i < n; i++)
         {
-            var info = new MENUITEMINFO { cbSize = (uint)Marshal.SizeOf(typeof(MENUITEMINFO)), fMask = MIIM_ID | MIIM_SUBMENU | MIIM_STRING | MIIM_FTYPE };
+            var info = new MENUITEMINFO { cbSize = (uint)Marshal.SizeOf(typeof(MENUITEMINFO)), fMask = MIIM_ID | MIIM_SUBMENU | MIIM_CHECKMARKS | MIIM_STRING | MIIM_BITMAP | MIIM_FTYPE };
             if (!GetMenuItemInfo(menu, i, true, ref info) || (info.fType & MFT_SEPARATOR) != 0) continue;
             var text = new StringBuilder((int)info.cch + 1);
             info.cch++;
@@ -132,7 +133,8 @@ public static class ShellMenu
             string label = Marshal.PtrToStringUni(info.dwTypeData).Replace("&", "");
             Marshal.FreeHGlobal(info.dwTypeData);
             if (label.Length == 0) continue;
-            lines.Add(indent + label);
+            bool icon = info.hbmpItem != IntPtr.Zero || info.hbmpUnchecked != IntPtr.Zero;
+            lines.Add(indent + label + (icon ? "  [icon]" : ""));
             string path = prefix + label;
             ids[path] = info.wID;
             if (info.hSubMenu != IntPtr.Zero)

@@ -48,21 +48,23 @@ fn install() -> Result<(), context_menu::Error> {
     })?;
     let menu = Menu::new("context-menu-demo", "context-menu demo")
         .submenu(true)
-        .icon("applications-utilities")
+        .icon(icon("applications-utilities", "explorer.exe,0"))
         .item(
             Item::new("archives", "Archives: show their paths", &me)
                 .args(["run", "archives"])
-                .icon("package-x-generic")
+                .icon(icon("package-x-generic", r"System32\zipfldr.dll,0"))
                 .extensions(["zip", "7z", "rar", "tar.gz", "tar.zst"]),
         )
         .item(
             Item::new("anything", "Anything: show the paths", &me)
                 .args(["run", "anything"])
+                .icon(icon("text-x-generic", r"System32\shell32.dll,0"))
                 .folders(true),
         )
         .item(
             Item::new("one-folder", "One folder: show its path", &me)
                 .args(["run", "one-folder"])
+                .icon(icon("folder", r"System32\shell32.dll,3"))
                 .folders_only()
                 .count(Count::One),
         );
@@ -74,6 +76,17 @@ fn install() -> Result<(), context_menu::Error> {
         println!("note: {note}");
     }
     Ok(())
+}
+
+/// An icon: a theme's name on Linux; on Windows, one of its own, in a file
+/// of the Windows folder, with its index.
+fn icon(name: &str, windows: &str) -> String {
+    if cfg!(windows) {
+        let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+        format!(r"{root}\{windows}")
+    } else {
+        name.to_string()
+    }
 }
 
 /// What an item runs: `run <item> <paths>...`.
