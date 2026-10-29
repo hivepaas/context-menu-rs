@@ -2,7 +2,7 @@
 
 Put your app in the right-click menu of the system's file manager, from Rust: Windows Explorer, macOS Finder and the file managers of Linux, from one description of the menu.
 
-> **Status:** early development. Linux and Windows work; macOS comes next. Nothing is published on crates.io yet.
+> **Status:** early development. Linux and Windows work. On macOS, Quick Actions are written and tested, and wait to be tried in Finder; a Finder Sync extension comes after. Nothing is published on crates.io yet.
 
 ## ✨ Usage
 
@@ -51,7 +51,8 @@ Each item runs its program with its arguments and then the paths chosen, in one 
 | **Thunar** (Xfce) | Custom actions, merged with the user's own | ✅ |
 | **Windows**, the classic menu | Verbs in the user's registry: the menu on Windows 10, and on Windows 11 under "Show more options" ([docs/windows.md](docs/windows.md)) | ✅ |
 | **Windows 11**, its own menu | A native extension (`IExplorerCommand`) that an app's package declares, built once and named after each menu, as Nautilus's; it serves the classic menu too | ✅ |
-| **macOS Finder** | Services first, then a Finder Sync extension | Planned |
+| **macOS Finder**, Quick Actions | A workflow per item in the user's `~/Library/Services`, in Finder's Quick Actions submenu, for the file types each item applies to ([docs/macos.md](docs/macos.md)) | ✅ |
+| **macOS Finder**, its own menu | A Finder Sync extension in an app's bundle | Planned |
 
 What each Linux file manager can and cannot do, and where the files go: [docs/linux.md](docs/linux.md). The menu's definition, which the native extensions read: [docs/definition.md](docs/definition.md).
 
