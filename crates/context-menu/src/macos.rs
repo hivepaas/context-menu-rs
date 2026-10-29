@@ -658,7 +658,12 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    const APP: &str = "/Applications/Pack Wing.app/Contents/MacOS/packwing";
+    /// An absolute path on this system: Windows's have a drive.
+    const APP: &str = if cfg!(windows) {
+        r"C:\Pack Wing\packwing.exe"
+    } else {
+        "/Applications/Pack Wing.app/Contents/MacOS/packwing"
+    };
 
     /// A Services folder in a fresh folder under the system's temporary
     /// one, for one test.
@@ -725,10 +730,10 @@ mod tests {
              \t\t\t\t<string>org.gnu.gnu-zip-archive</string>\n\
              \t\t\t</array>\n"
         ));
-        assert!(bundles[0].document.contains(
-            "<string>set -m; '/Applications/Pack Wing.app/Contents/MacOS/packwing' \
-             '--extract' 'it'\\''s' \"$@\" &lt;/dev/null &gt;/dev/null 2&gt;&amp;1 &amp;</string>"
-        ));
+        assert!(bundles[0].document.contains(&format!(
+            "<string>set -m; '{APP}' '--extract' 'it'\\''s' \"$@\" \
+             &lt;/dev/null &gt;/dev/null 2&gt;&amp;1 &amp;</string>"
+        )));
         assert!(bundles[1].info.contains(
             "\t\t\t\t<string>public.data</string>\n\
              \t\t\t\t<string>com.apple.package</string>\n\
