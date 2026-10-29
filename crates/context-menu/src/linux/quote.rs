@@ -2,6 +2,8 @@
 //! desktop entries (Dolphin), key files (Nemo), shell (Nautilus scripts and
 //! Nemo's command lines) and Python (the Nautilus extension).
 
+use std::path::Path;
+
 /// A value in a desktop entry or a GLib key file: backslashes and line
 /// breaks escaped, and a leading space kept.
 pub fn key_value(s: &str) -> String {
@@ -40,6 +42,18 @@ pub fn exec_arg(arg: &str) -> String {
     }
     out.push('"');
     out
+}
+
+/// A desktop entry's `Exec`, before [`key_value`]: the program, its
+/// arguments, and `%F` for the paths chosen, all in one run.
+pub fn exec(program: &Path, args: &[String]) -> String {
+    let mut exec = exec_arg(&program.to_string_lossy());
+    for arg in args {
+        exec.push(' ');
+        exec.push_str(&exec_arg(arg));
+    }
+    exec.push_str(" %F");
+    exec
 }
 
 /// A word for a POSIX shell: in single quotes, a quote as `'\''`.

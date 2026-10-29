@@ -10,7 +10,8 @@ use crate::{Error, Menu, Report};
 
 /// Where the menu goes: the classes key under `HKEY_CURRENT_USER`, and the
 /// data folder its definition goes in; and where Windows says whether an
-/// app's package serves the menu with the native extension.
+/// app's package serves the menu with the native extension. A handler goes
+/// in the classes key too, and in `RegisteredApplications` beside it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Root {
     /// `Software\Classes` for the user's own, which Explorer reads.
@@ -37,19 +38,28 @@ impl Root {
     }
 
     /// The full name of `path`, for a report.
-    fn name(&self, path: &str) -> PathBuf {
+    pub(super) fn name(&self, path: &str) -> PathBuf {
         PathBuf::from(format!(r"HKEY_CURRENT_USER\{}\{path}", self.classes))
     }
 
-    fn error(&self, path: &str, source: std::io::Error) -> Error {
+    pub(super) fn error(&self, path: &str, source: std::io::Error) -> Error {
         Error::Io {
             path: self.name(path),
             source,
         }
     }
 
+    /// `RegisteredApplications`, beside the classes key: for
+    /// `Software\Classes`, `Software\RegisteredApplications`.
+    pub(super) fn registered(&self) -> String {
+        match self.classes.rsplit_once('\\') {
+            Some((parent, _)) => format!(r"{parent}\RegisteredApplications"),
+            None => "RegisteredApplications".into(),
+        }
+    }
+
     /// The classes key, made if it is not there.
-    fn open(&self) -> Result<RegKey, Error> {
+    pub(super) fn open(&self) -> Result<RegKey, Error> {
         RegKey::predef(HKEY_CURRENT_USER)
             .create_subkey(&self.classes)
             .map(|(k, _)| k)
@@ -116,7 +126,7 @@ fn existing(classes: &RegKey, id: &str) -> Vec<String> {
 }
 
 /// The keys under `path`, it first, as the plan has them.
-fn read(classes: &RegKey, path: &str, out: &mut Vec<Key>) -> std::io::Result<()> {
+pub(super) fn read(classes: &RegKey, path: &str, out: &mut Vec<Key>) -> std::io::Result<()> {
     let key = classes.open_subkey(path)?;
     let mut values = Vec::new();
     for (name, _) in key.enum_values().flatten() {
@@ -137,7 +147,7 @@ fn read(classes: &RegKey, path: &str, out: &mut Vec<Key>) -> std::io::Result<()>
 }
 
 /// The keys of a plan, or of what is there, in one order to compare them.
-fn sorted(mut keys: Vec<Key>) -> Vec<Key> {
+pub(super) fn sorted(mut keys: Vec<Key>) -> Vec<Key> {
     for k in &mut keys {
         k.values.sort();
     }

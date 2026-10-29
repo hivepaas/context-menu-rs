@@ -1,6 +1,6 @@
 # context-menu-rs
 
-Put your app in the right-click menu of the system's file manager, from Rust: Windows Explorer, macOS Finder and the file managers of Linux, from one description of the menu.
+Put your app in the right-click menu of the system's file manager, from Rust: Windows Explorer, macOS Finder and the file managers of Linux, from one description of the menu. And in their Open With, for the files your app opens.
 
 > **Status:** early development: 0.1.0 is the first release. Linux, Windows and macOS work.
 
@@ -125,9 +125,32 @@ Not every file manager shows them all: Nautilus shows none, Nemo no paths, and m
 
 Your app goes on calling `install` and `is_current` as above: they find the extension, and use it.
 
+### Open With
+
+An app that opens some files can put itself in the file manager's Open With for them, with a `Handler`:
+
+```rust
+use context_menu::open_with::{self, Handler};
+
+let handler = Handler::new("packwing", "Pack Wing", app)   // an id, and the name Open With shows
+    .arg("--open")
+    .extensions(["zip", "7z", "rar", "tar.zst"]);
+if !open_with::is_current(&handler)? {
+    open_with::install(&handler)?;
+}
+```
+
+Choosing the app there runs its program as an item does, with its arguments and the files chosen: `packwing --open /home/me/a.zip`. It is offered, not chosen: which app opens those files at a double click stays the user's to say, and Windows lets no app say it for them. `open_with::uninstall("packwing")` takes it away.
+
+| System | How |
+|---|---|
+| Linux | A desktop entry in the user's `~/.local/share/applications`, hidden from the app menus, and listed in GLib's cache there: Open With in every file manager ([docs/linux.md](docs/linux.md#open-with)). A package's own desktop entry can do it instead. |
+| Windows | A ProgID in the user's registry, listed for each extension: Open With, and Settings' Default apps, whose page for the app `windows::open_with::settings_uri` gives, to send the user to ([docs/windows.md](docs/windows.md#open-with)) |
+| macOS | Nothing to install: the app's `Info.plist` declares the files it opens, and they reach it as an event, not as arguments ([docs/macos.md](docs/macos.md#open-with)). `install` is `Error::Unsupported` there. |
+
 ### Try it
 
-`cargo run --example demo -- install` puts a demo menu in your file manager, whose items show the paths they get; `uninstall` takes it away, and `status` says whether `install` would change anything. For the native extensions, `scripts/windows/demo-package.ps1` and `scripts/macos/demo-app.sh` set the demo up with them.
+`cargo run --example demo -- install` puts a demo menu in your file manager, whose items show the paths they get, and on Linux and Windows the demo in Open With for archives; `uninstall` takes it away, and `status` says whether `install` would change anything. For the native extensions, `scripts/windows/demo-package.ps1` and `scripts/macos/demo-app.sh` set the demo up with them.
 
 ## 🖥️ Where
 

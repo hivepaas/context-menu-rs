@@ -11,6 +11,8 @@
 //! every system, and written on Windows alone. The names the native
 //! extension and an app's package use for Windows 11's own menu are here
 //! too, for the extension and for an app's build on any system.
+//!
+//! Open With is [`open_with`]'s: a ProgID, listed for each extension.
 
 // The plan is used by the registry's code, on Windows, and by tests.
 #![cfg_attr(not(windows), allow(dead_code))]
@@ -112,10 +114,10 @@ fn quote(arg: &str) -> String {
     out
 }
 
-/// The item's command: the program, its arguments, and the file chosen.
-fn command(item: &Item) -> String {
-    let mut s = quote(&item.program.to_string_lossy());
-    for arg in &item.args {
+/// A verb's command: the program, its arguments, and the file chosen.
+fn command(program: &Path, args: &[String]) -> String {
+    let mut s = quote(&program.to_string_lossy());
+    for arg in args {
         s.push(' ');
         s.push_str(&quote(arg));
     }
@@ -210,7 +212,7 @@ pub(crate) fn plan(menu: &Menu) -> Vec<Key> {
                 });
                 keys.push(Key {
                     path: format!("{path}\\command"),
-                    values: vec![(String::new(), command(item))],
+                    values: vec![(String::new(), command(&item.program, &item.args))],
                 });
             }
         } else {
@@ -224,7 +226,7 @@ pub(crate) fn plan(menu: &Menu) -> Vec<Key> {
                 });
                 keys.push(Key {
                     path: format!("{path}\\command"),
-                    values: vec![(String::new(), command(item))],
+                    values: vec![(String::new(), command(&item.program, &item.args))],
                 });
             }
         }
@@ -364,6 +366,7 @@ fn sha1(data: &[u8]) -> [u8; 20] {
     out
 }
 
+pub mod open_with;
 #[cfg(windows)]
 mod registry;
 #[cfg(windows)]

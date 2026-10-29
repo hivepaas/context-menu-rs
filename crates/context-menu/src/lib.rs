@@ -43,6 +43,9 @@
 //! native extension an app's package declares for Windows 11's own, in
 //! `docs/windows.md`; Finder's own menu, from the native extension an app's
 //! bundle holds, and its Quick Actions without one, in `docs/macos.md`.
+//!
+//! Open With, in the same menu, is [`open_with`]'s: an app that opens some
+//! types of files puts itself there with a [`Handler`](open_with::Handler).
 
 use std::fmt;
 use std::path::PathBuf;
@@ -51,6 +54,7 @@ mod definition;
 #[cfg(target_os = "linux")]
 pub mod linux;
 pub mod macos;
+pub mod open_with;
 pub mod windows;
 
 /// An app's items in the right-click menu.
@@ -260,11 +264,7 @@ impl Item {
 
     /// Only files with these extensions: `zip` or `.zip`, any case.
     pub fn extensions(mut self, extensions: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
-        let list = extensions
-            .into_iter()
-            .map(|e| e.as_ref().trim_start_matches('.').to_lowercase())
-            .collect();
-        self.applies_to.files = Files::Extensions(list);
+        self.applies_to.files = Files::Extensions(crate::extensions(extensions));
         self
     }
 
@@ -290,21 +290,9 @@ impl Item {
     fn validate(&self) -> Result<(), Error> {
         check_id("an item's id", &self.id)?;
         check_label(&format!("the label of {:?}", self.id), &self.label)?;
-        if !self.program.is_absolute() {
-            return Err(Error::Invalid(format!(
-                "the program of {:?} is not an absolute path: {}",
-                self.id,
-                self.program.display()
-            )));
-        }
-        for arg in &self.args {
-            if arg.contains(['\0', '\n', '\r']) {
-                return Err(Error::Invalid(format!(
-                    "an argument of {:?} holds a NUL or a line break",
-                    self.id
-                )));
-            }
-        }
+        let of = format!("{:?}", self.id);
+        check_program(&of, &self.program)?;
+        check_args(&of, &self.args)?;
         match &self.applies_to.files {
             Files::None if !self.applies_to.folders => {
                 return Err(Error::Invalid(format!(
@@ -312,34 +300,67 @@ impl Item {
                     self.id
                 )));
             }
-            Files::Extensions(list) => {
-                if list.is_empty() {
-                    return Err(Error::Invalid(format!("{:?} has no extensions", self.id)));
-                }
-                for ext in list {
-                    let ok = !ext.is_empty()
-                        && !ext.starts_with('.')
-                        && !ext.ends_with('.')
-                        && ext.chars().all(|c| {
-                            c.is_alphanumeric() && !c.is_uppercase() || "._-+".contains(c)
-                        });
-                    if !ok {
-                        return Err(Error::Invalid(format!(
-                            "{:?} has an extension that cannot be matched: {ext:?}",
-                            self.id
-                        )));
-                    }
-                }
-            }
+            Files::Extensions(list) => check_extensions(&of, list)?,
             _ => {}
         }
         Ok(())
     }
 }
 
-/// Whether `id` can name a menu or an item: 1 to 64 lower-case ASCII
-/// letters, digits and `-`, neither first nor last. So it fits a file name
-/// or a registry key as it is, and `.` can join a menu's and an item's.
+/// Extensions as they are kept: without the dot, in lower case.
+fn extensions(list: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<String> {
+    list.into_iter()
+        .map(|e| e.as_ref().trim_start_matches('.').to_lowercase())
+        .collect()
+}
+
+/// The program of `of`, an item or a handler: an absolute path.
+fn check_program(of: &str, program: &std::path::Path) -> Result<(), Error> {
+    if program.is_absolute() {
+        Ok(())
+    } else {
+        Err(Error::Invalid(format!(
+            "the program of {of} is not an absolute path: {}",
+            program.display()
+        )))
+    }
+}
+
+/// The arguments of `of`: each on one line, with no NUL.
+fn check_args(of: &str, args: &[String]) -> Result<(), Error> {
+    if args.iter().any(|a| a.contains(['\0', '\n', '\r'])) {
+        Err(Error::Invalid(format!(
+            "an argument of {of} holds a NUL or a line break"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+/// The extensions of `of`: some, each one a name can end in.
+fn check_extensions(of: &str, list: &[String]) -> Result<(), Error> {
+    if list.is_empty() {
+        return Err(Error::Invalid(format!("{of} has no extensions")));
+    }
+    for ext in list {
+        let ok = !ext.is_empty()
+            && !ext.starts_with('.')
+            && !ext.ends_with('.')
+            && ext
+                .chars()
+                .all(|c| c.is_alphanumeric() && !c.is_uppercase() || "._-+".contains(c));
+        if !ok {
+            return Err(Error::Invalid(format!(
+                "{of} has an extension that cannot be matched: {ext:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Whether `id` can name a menu, an item or a handler: 1 to 64 lower-case
+/// ASCII letters, digits and `-`, neither first nor last. So it fits a file
+/// name or a registry key as it is, and `.` can join a menu's and an item's.
 pub fn valid_id(id: &str) -> bool {
     (1..=64).contains(&id.len())
         && id
@@ -370,26 +391,29 @@ fn check_label(what: &str, label: &str) -> Result<(), Error> {
     }
 }
 
-/// What [`install`] or [`uninstall`] did.
+/// What [`install`] or [`uninstall`] did, or those of [`open_with`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Report {
     /// The files written: on Windows the registry keys too, as
-    /// `HKEY_CURRENT_USER\Software\Classes\…`, and on macOS the bundles,
-    /// which are folders.
+    /// `HKEY_CURRENT_USER\Software\Classes\…`, and the values a handler
+    /// adds to keys shared with others, as a key's name and the value's;
+    /// and on macOS the bundles, which are folders.
     pub written: Vec<PathBuf>,
-    /// The files or keys taken away: an earlier install's.
+    /// The files, keys or values taken away: an earlier install's.
     pub removed: Vec<PathBuf>,
     /// What the user may need to know or do, such as restarting a file
     /// manager, in English.
     pub notes: Vec<String>,
 }
 
-/// Why the menu could not be installed or removed.
+/// Why the menu, or a handler, could not be installed or removed.
 #[derive(Debug)]
 pub enum Error {
-    /// The menu breaks a rule of [`Menu::validate`].
+    /// The menu breaks a rule of [`Menu::validate`], or the handler one of
+    /// [`Handler::validate`](open_with::Handler::validate).
     Invalid(String),
-    /// Where the menu goes could not be found: no home folder.
+    /// Where the menu or the handler goes could not be found: no home
+    /// folder.
     NoHome,
     /// A file could not be read, written or removed.
     Io {
@@ -398,7 +422,9 @@ pub enum Error {
         /// What went wrong.
         source: std::io::Error,
     },
-    /// Not on this system yet.
+    /// Not on this system: menus on any but Linux, Windows and macOS, and
+    /// handlers on any but Linux and Windows. On macOS, an app's bundle
+    /// declares the files it opens (`docs/macos.md`).
     Unsupported,
 }
 
@@ -414,10 +440,10 @@ impl Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Invalid(why) => write!(f, "invalid menu: {why}"),
-            Error::NoHome => f.write_str("no home folder to install the menu in"),
+            Error::Invalid(why) => write!(f, "invalid: {why}"),
+            Error::NoHome => f.write_str("no home folder to install in"),
             Error::Io { path, source } => write!(f, "{}: {source}", path.display()),
-            Error::Unsupported => f.write_str("right-click menus are not supported here yet"),
+            Error::Unsupported => f.write_str("not supported on this system"),
         }
     }
 }
