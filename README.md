@@ -2,9 +2,15 @@
 
 Put your app in the right-click menu of the system's file manager, from Rust: Windows Explorer, macOS Finder and the file managers of Linux, from one description of the menu.
 
-> **Status:** early development. Linux, Windows and macOS work. Nothing is published on crates.io yet.
+> **Status:** early development: 0.1.0 is the first release. Linux, Windows and macOS work.
 
 ## ✨ Usage
+
+```sh
+cargo add context-menu
+```
+
+The native extensions, for Nautilus, Windows 11 and Finder, are built once and shipped in the [releases](https://github.com/hivepaas/context-menu-rs/releases): see each system's page below.
 
 ```rust
 use context_menu::{Count, Item, Menu};

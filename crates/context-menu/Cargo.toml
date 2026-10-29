@@ -1,12 +1,10 @@
 [package]
 name = "context-menu"
-version = "0.0.0"
+version = "0.1.0"
 description = "Put your app in the right-click menu of Windows Explorer, macOS Finder and Linux file managers"
 readme = "../../README.md"
 keywords = ["context-menu", "file-manager", "explorer", "finder", "nautilus"]
 categories = ["os", "gui"]
-# Nothing to publish until Windows works too.
-publish = false
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
