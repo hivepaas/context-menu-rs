@@ -1,7 +1,7 @@
 [package]
 name = "context-menu"
-version = "0.1.0"
-description = "Put your app in the right-click menu of Windows Explorer, macOS Finder and Linux file managers"
+version = "0.2.0"
+description = "Put your app in the right-click menu of Windows Explorer, macOS Finder and Linux file managers, and in Open With"
 readme = "../../README.md"
 keywords = ["context-menu", "file-manager", "explorer", "finder", "nautilus"]
 categories = ["os", "gui"]
