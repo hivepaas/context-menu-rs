@@ -147,20 +147,42 @@ pub(crate) fn plan(menu: &Menu) -> Vec<Key> {
     let mark = (MARK.to_string(), menu.id.clone());
     let mut keys = Vec::new();
     for class in &all_classes {
-        let items = menu
+        // Explorer shows one verb of a name, an extension's over `*`'s, so
+        // a submenu under an extension holds the items for any file too.
+        let extension = class.starts_with("SystemFileAssociations\\");
+        let items: Vec<(usize, &Item)> = menu
             .items
             .iter()
             .enumerate()
-            .filter(|(_, i)| classes(i).contains(class));
+            .filter(|(_, i)| {
+                let of = classes(i);
+                of.contains(class) || (menu.submenu && extension && of.iter().any(|c| c == "*"))
+            })
+            .collect();
         if menu.submenu {
             let parent = format!("{class}\\shell\\{}", menu.id);
+            // Windows reads MultiSelectModel for the submenu's own verb, not
+            // its items', and shows the submenu even with nothing in it: it
+            // takes its items' count and condition when they all have one.
+            let model = if items.iter().all(|(_, i)| i.applies_to.count == Count::One) {
+                "Single"
+            } else {
+                "Player"
+            };
             let mut values = vec![
                 ("MUIVerb".to_string(), menu.title.clone()),
                 ("SubCommands".to_string(), String::new()),
-                ("MultiSelectModel".to_string(), "Player".to_string()),
+                ("MultiSelectModel".to_string(), model.to_string()),
             ];
             if let Some(icon) = icon(menu.icon.as_ref()) {
                 values.push(("Icon".into(), icon.into()));
+            }
+            let filters: Option<Vec<String>> =
+                items.iter().map(|(_, i)| applies_to(i, class)).collect();
+            if let Some(mut filters) = filters {
+                filters.sort();
+                filters.dedup();
+                values.push(("AppliesTo".into(), filters.join(" OR ")));
             }
             values.push(mark.clone());
             keys.push(Key {
@@ -172,7 +194,7 @@ pub(crate) fn plan(menu: &Menu) -> Vec<Key> {
                 path: format!("{parent}\\shell"),
                 values: Vec::new(),
             });
-            for (n, item) in items {
+            for &(n, item) in &items {
                 let path = format!("{parent}\\shell\\{n:02}.{}", item.id);
                 keys.push(Key {
                     path: path.clone(),
@@ -184,7 +206,7 @@ pub(crate) fn plan(menu: &Menu) -> Vec<Key> {
                 });
             }
         } else {
-            for (n, item) in items {
+            for &(n, item) in &items {
                 let path = format!("{class}\\shell\\{}.{n:02}.{}", menu.id, item.id);
                 let mut values = verb(item, class);
                 values.push(mark.clone());
@@ -271,10 +293,14 @@ mod tests {
                 r"SystemFileAssociations\.zip\shell\packwing\shell",
                 r"SystemFileAssociations\.zip\shell\packwing\shell\00.extract",
                 r"SystemFileAssociations\.zip\shell\packwing\shell\00.extract\command",
+                r"SystemFileAssociations\.zip\shell\packwing\shell\01.compress",
+                r"SystemFileAssociations\.zip\shell\packwing\shell\01.compress\command",
                 r"SystemFileAssociations\.gz\shell\packwing",
                 r"SystemFileAssociations\.gz\shell\packwing\shell",
                 r"SystemFileAssociations\.gz\shell\packwing\shell\00.extract",
                 r"SystemFileAssociations\.gz\shell\packwing\shell\00.extract\command",
+                r"SystemFileAssociations\.gz\shell\packwing\shell\01.compress",
+                r"SystemFileAssociations\.gz\shell\packwing\shell\01.compress\command",
                 r"*\shell\packwing",
                 r"*\shell\packwing\shell",
                 r"*\shell\packwing\shell\01.compress",
@@ -315,11 +341,38 @@ mod tests {
                     .to_string()
             )]
         );
-        // Under .gz, only names ending in .tar.gz.
-        assert!(keys[6].values.contains(&(
+        // Under .gz, only names ending in .tar.gz; the submenu shows for
+        // every .gz, for "Compress".
+        assert!(keys[8].values.contains(&(
             "AppliesTo".to_string(),
             r#"System.FileName:~>".tar.gz""#.to_string()
         )));
+        assert!(!keys[6].values.iter().any(|(name, _)| name == "AppliesTo"));
+    }
+
+    #[test]
+    fn a_submenu_takes_what_all_its_items_have() {
+        let menu = Menu::new("packwing", "Pack Wing").submenu(true).item(
+            Item::new("extract", "Extract here", APP)
+                .extensions(["zip", "tar.gz"])
+                .count(Count::One),
+        );
+        let keys = plan(&menu);
+        let parent = |path: &str| {
+            keys.iter()
+                .find(|k| k.path == path)
+                .map(|k| k.values.clone())
+                .unwrap_or_default()
+        };
+        let gz = parent(r"SystemFileAssociations\.gz\shell\packwing");
+        assert!(gz.contains(&("MultiSelectModel".to_string(), "Single".to_string())));
+        assert!(gz.contains(&(
+            "AppliesTo".to_string(),
+            r#"System.FileName:~>".tar.gz""#.to_string()
+        )));
+        let zip = parent(r"SystemFileAssociations\.zip\shell\packwing");
+        assert!(zip.contains(&("MultiSelectModel".to_string(), "Single".to_string())));
+        assert!(!zip.iter().any(|(name, _)| name == "AppliesTo"));
     }
 
     #[test]

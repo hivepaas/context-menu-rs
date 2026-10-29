@@ -6,13 +6,12 @@
 .EXAMPLE
   .\menu.ps1 C:\Users\me\a.zip
   .\menu.ps1 C:\Users\me\a.zip, C:\Users\me\b.zip
-  .\menu.ps1 C:\Users\me\a.zip -Choose 'Archives: show their paths'
+  .\menu.ps1 C:\Users\me\a.zip -Choose 'context-menu demo/Archives: show their paths'
 
 .NOTES
-  The files must be in one folder, as a selection in Explorer is. Items are
-  printed one per line, a submenu's indented under it. A submenu of verbs
-  (SubCommands) is filled only as it opens on the screen, so it shows here
-  with nothing under it, and its items cannot be chosen.
+  The files must be in one folder, as a selection in Explorer is, and the
+  menu is the first one's, as Explorer's is the one right-clicked. Items are
+  printed one per line, a submenu's indented under it.
 #>
 param(
     [Parameter(Mandatory = $true, Position = 0)] [string[]] $Paths,
@@ -139,14 +138,12 @@ public static class ShellMenu
             if (info.hSubMenu != IntPtr.Zero)
             {
                 // A submenu may be filled only as it opens, as Explorer
-                // tells the menu with WM_INITMENUPOPUP.
-                if (GetMenuItemCount(info.hSubMenu) == 0)
-                {
-                    var cm3 = cm as IContextMenu3;
-                    IntPtr result;
-                    if (cm3 != null) cm3.HandleMenuMsg2(WM_INITMENUPOPUP, info.hSubMenu, (IntPtr)i, out result);
-                    else cm.HandleMenuMsg(WM_INITMENUPOPUP, info.hSubMenu, (IntPtr)i);
-                }
+                // tells the menu with WM_INITMENUPOPUP; until then a
+                // submenu of verbs holds an item with no label.
+                var cm3 = cm as IContextMenu3;
+                IntPtr result;
+                if (cm3 != null) cm3.HandleMenuMsg2(WM_INITMENUPOPUP, info.hSubMenu, (IntPtr)i, out result);
+                else cm.HandleMenuMsg(WM_INITMENUPOPUP, info.hSubMenu, (IntPtr)i);
                 Walk(cm, info.hSubMenu, path + "/", indent + "  ", lines, ids);
             }
         }
