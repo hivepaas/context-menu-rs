@@ -39,7 +39,8 @@
 //!
 //! Where each file manager keeps its menu, and what each can and cannot do,
 //! is in `docs/linux.md`; Nautilus's native extension, which an app's
-//! package installs, in `docs/nautilus.md`; Windows's classic menu in
+//! package installs, in `docs/nautilus.md`; Windows's classic menu, and the
+//! native extension an app's package declares for Windows 11's own, in
 //! `docs/windows.md`. macOS comes next; until then [`install`] returns
 //! [`Error::Unsupported`] there.
 
@@ -49,7 +50,6 @@ use std::path::PathBuf;
 mod definition;
 #[cfg(target_os = "linux")]
 pub mod linux;
-#[cfg(any(windows, test))]
 pub mod windows;
 
 /// An app's items in the right-click menu.

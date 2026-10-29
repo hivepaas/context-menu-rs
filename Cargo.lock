@@ -24,6 +24,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "context-menu-windows"
+version = "0.0.0"
+dependencies = [
+ "context-menu",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"

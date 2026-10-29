@@ -9,7 +9,9 @@
 //! ```
 //!
 //! The menu runs the program where cargo built it, so keep it there while
-//! trying the menu.
+//! trying the menu. On Windows 11, `demo manifest` writes the manifest of a
+//! package for the demo, declaring the native extension, which
+//! `scripts/windows/demo-package.ps1` registers: see `docs/windows.md`.
 
 use std::io::Write as _;
 use std::process::ExitCode;
@@ -27,8 +29,12 @@ fn main() -> ExitCode {
             run(&args[1..]);
             Ok(())
         }
+        Some("manifest") => {
+            print!("{}", manifest());
+            Ok(())
+        }
         _ => {
-            eprintln!("usage: demo install | uninstall");
+            eprintln!("usage: demo install | uninstall | manifest");
             return ExitCode::from(2);
         }
     };
@@ -76,6 +82,55 @@ fn install() -> Result<(), context_menu::Error> {
         println!("note: {note}");
     }
     Ok(())
+}
+
+/// The manifest of a package for the demo, as an app's has it: the app's
+/// identity, a program, logos, and the native extension serving the menu,
+/// all in the demo's folder, the package's external location. A package
+/// for Windows 10 2004 and later; Windows 11 shows the menu in its own.
+fn manifest() -> String {
+    let extensions: String = context_menu::windows::package_extensions("context-menu-demo")
+        .lines()
+        .map(|l| format!("        {l}\n"))
+        .collect();
+    format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+  xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+  xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  IgnorableNamespaces="uap uap10 desktop4 desktop5 rescap com">
+  <Identity Name="ContextMenuRs.Demo" Publisher="CN=context-menu-rs demo" Version="0.1.0.0" ProcessorArchitecture="neutral" />
+  <Properties>
+    <DisplayName>context-menu demo</DisplayName>
+    <PublisherDisplayName>context-menu-rs</PublisherDisplayName>
+    <Logo>logo50.png</Logo>
+    <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
+  </Properties>
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources" />
+  </Capabilities>
+  <Applications>
+    <Application Id="Demo" Executable="demo.exe" uap10:TrustLevel="mediumIL" uap10:RuntimeBehavior="win32App">
+      <uap:VisualElements AppListEntry="none" DisplayName="context-menu demo" Description="context-menu demo" BackgroundColor="transparent" Square150x150Logo="logo150.png" Square44x44Logo="logo44.png" />
+      <Extensions>
+{extensions}      </Extensions>
+    </Application>
+  </Applications>
+</Package>
+"#
+    )
 }
 
 /// An icon: a theme's name on Linux; on Windows, one of its own, in a file

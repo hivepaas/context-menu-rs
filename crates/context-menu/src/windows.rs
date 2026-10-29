@@ -8,7 +8,12 @@
 //! folders. Windows runs a verb's command once for each file chosen.
 //!
 //! What goes in the registry is planned here in plain Rust, the same on
-//! every system, and written on Windows alone.
+//! every system, and written on Windows alone. The names the native
+//! extension and an app's package use for Windows 11's own menu are here
+//! too, for the extension and for an app's build on any system.
+
+// The plan is used by the registry's code, on Windows, and by tests.
+#![cfg_attr(not(windows), allow(dead_code))]
 
 use std::path::{Path, PathBuf};
 
@@ -69,15 +74,18 @@ fn applies_to(item: &Item, class: &str) -> Option<String> {
     (!longer.is_empty()).then(|| longer.join(" OR "))
 }
 
-/// An icon Windows can use: a path to an `.ico`, or to an `.exe` or `.dll`
-/// and an index (`app.exe,0`). An icon theme's name, for Linux, is not one.
-fn icon(icon: Option<&String>) -> Option<&str> {
-    let icon = icon?;
-    let file = icon.rsplit_once(',').map_or(icon.as_str(), |(f, _)| f);
+/// Whether Windows can use `icon`: a path to an `.ico`, or to an `.exe` or
+/// `.dll` and an index (`app.exe,0`). An icon theme's name, for Linux, is
+/// not one.
+pub fn is_icon(icon: &str) -> bool {
+    let file = icon.rsplit_once(',').map_or(icon, |(f, _)| f);
     let lower = file.to_ascii_lowercase();
     let is_path = Path::new(file).is_absolute() || file.contains('\\');
-    (is_path && [".ico", ".exe", ".dll"].iter().any(|e| lower.ends_with(e)))
-        .then_some(icon.as_str())
+    is_path && [".ico", ".exe", ".dll"].iter().any(|e| lower.ends_with(e))
+}
+
+fn icon(icon: Option<&String>) -> Option<&str> {
+    icon.map(String::as_str).filter(|i| is_icon(i))
 }
 
 /// An argument quoted as `CommandLineToArgvW` reads it back: in quotes,
@@ -238,6 +246,124 @@ pub fn definition_path(id: &str, data_home: &Path) -> PathBuf {
     data_home.join("context-menu-rs").join(format!("{id}.menu"))
 }
 
+/// The name the native extension, `context-menu-windows`, has when it
+/// serves the menu `id`: `context-menu-<id>.dll`. See `docs/windows.md`.
+pub fn native_name(id: &str) -> String {
+    format!("context-menu-{id}.dll")
+}
+
+/// The COM class of the native extension serving the menu `id`, as an app's
+/// package declares it: a GUID made from the id alone (RFC 9562's version
+/// 5), so the extension knows it too, in upper case with no braces.
+pub fn clsid(id: &str) -> String {
+    // context-menu-rs's own namespace, ae650857-d795-49b3-ad8d-995659ed5e7b.
+    const NAMESPACE: [u8; 16] = [
+        0xae, 0x65, 0x08, 0x57, 0xd7, 0x95, 0x49, 0xb3, 0xad, 0x8d, 0x99, 0x56, 0x59, 0xed, 0x5e,
+        0x7b,
+    ];
+    let mut name = NAMESPACE.to_vec();
+    name.extend_from_slice(id.as_bytes());
+    let hash = sha1(&name);
+    let mut out = String::with_capacity(36);
+    for (i, b) in hash.iter().take(16).enumerate() {
+        let b = match i {
+            6 => (b & 0x0f) | 0x50,
+            8 => (b & 0x3f) | 0x80,
+            _ => *b,
+        };
+        if [4, 6, 8, 10].contains(&i) {
+            out.push('-');
+        }
+        out.push_str(&format!("{b:02X}"));
+    }
+    out
+}
+
+/// What an app's package manifest declares for the menu `id`, inside its
+/// `<Application>`'s `<Extensions>`: Windows 11's menu, for any file and
+/// any folder, served by the native extension under its name, in the
+/// package's folder. The manifest declares the namespaces `desktop4`,
+/// `desktop5` and `com`. See `docs/windows.md`.
+pub fn package_extensions(id: &str) -> String {
+    let clsid = clsid(id);
+    let name = native_name(id);
+    let verb: String = id.chars().filter(char::is_ascii_alphanumeric).collect();
+    format!(
+        r#"<desktop4:Extension Category="windows.fileExplorerContextMenus">
+  <desktop4:FileExplorerContextMenus>
+    <desktop5:ItemType Type="*">
+      <desktop5:Verb Id="ContextMenuRs{verb}" Clsid="{clsid}" />
+    </desktop5:ItemType>
+    <desktop5:ItemType Type="Directory">
+      <desktop5:Verb Id="ContextMenuRs{verb}" Clsid="{clsid}" />
+    </desktop5:ItemType>
+  </desktop4:FileExplorerContextMenus>
+</desktop4:Extension>
+<com:Extension Category="windows.comServer">
+  <com:ComServer>
+    <com:SurrogateServer DisplayName="{id}">
+      <com:Class Id="{clsid}" Path="{name}" ThreadingModel="STA" />
+    </com:SurrogateServer>
+  </com:ComServer>
+</com:Extension>
+"#
+    )
+}
+
+/// SHA-1, for [`clsid`] alone.
+fn sha1(data: &[u8]) -> [u8; 20] {
+    let mut h: [u32; 5] = [
+        0x6745_2301,
+        0xEFCD_AB89,
+        0x98BA_DCFE,
+        0x1032_5476,
+        0xC3D2_E1F0,
+    ];
+    let mut message = data.to_vec();
+    message.push(0x80);
+    while message.len() % 64 != 56 {
+        message.push(0);
+    }
+    message.extend_from_slice(&(data.len() as u64).wrapping_mul(8).to_be_bytes());
+    for block in message.as_chunks::<64>().0 {
+        let mut w = [0u32; 80];
+        for (i, word) in block.as_chunks::<4>().0.iter().enumerate() {
+            w[i] = u32::from_be_bytes(*word);
+        }
+        for i in 16..80 {
+            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+        }
+        let [mut a, mut b, mut c, mut d, mut e] = h;
+        for (i, word) in w.iter().enumerate() {
+            let (f, k) = match i {
+                0..20 => ((b & c) | (!b & d), 0x5A82_7999),
+                20..40 => (b ^ c ^ d, 0x6ED9_EBA1),
+                40..60 => ((b & c) | (b & d) | (c & d), 0x8F1B_BCDC),
+                _ => (b ^ c ^ d, 0xCA62_C1D6),
+            };
+            let t = a
+                .rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(*word);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = t;
+        }
+        for (x, y) in h.iter_mut().zip([a, b, c, d, e]) {
+            *x = x.wrapping_add(y);
+        }
+    }
+    let mut out = [0u8; 20];
+    for (chunk, x) in out.as_chunks_mut::<4>().0.iter_mut().zip(h) {
+        *chunk = x.to_be_bytes();
+    }
+    out
+}
+
 #[cfg(windows)]
 mod registry;
 #[cfg(windows)]
@@ -271,6 +397,35 @@ mod tests {
         assert_eq!(quote(r"C:\dir\"), r#""C:\dir\\""#);
         assert_eq!(quote(r#"a\"b"#), r#""a\\\"b""#);
         assert_eq!(quote(""), r#""""#);
+    }
+
+    #[test]
+    fn sha1_is_sha1() {
+        let hex = |d: &[u8]| {
+            sha1(d)
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        };
+        assert_eq!(hex(b"abc"), "a9993e364706816aba3e25717850c26c9cd0d89d");
+        assert_eq!(
+            hex(&[b'a'; 1000]),
+            "291e9a6c66994949b57ba5e650361e98fc36b1ba"
+        );
+    }
+
+    #[test]
+    fn a_menu_has_its_own_class() {
+        // As Python's uuid.uuid5 makes them.
+        assert_eq!(clsid("packwing"), "AC1A75AA-BC84-59DB-BD47-0E295821318E");
+        assert_eq!(
+            clsid("context-menu-demo"),
+            "95BB8076-AA57-58EE-84F1-C022DADC184D"
+        );
+        let xml = package_extensions("photo-kit");
+        assert!(xml.contains(r#"Clsid="E09045CE-CCB6-5DBD-8BE4-F08B7DEB3BFC""#));
+        assert!(xml.contains(r#"Path="context-menu-photo-kit.dll""#));
+        assert!(xml.contains(r#"Id="ContextMenuRsphotokit""#));
     }
 
     #[test]

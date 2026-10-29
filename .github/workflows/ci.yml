@@ -64,8 +64,9 @@ jobs:
       fail-fast: false
       matrix:
         # Linux runs the file managers' tests, with Python and sh, and loads
-        # the native extension with Nautilus's library; the others check the
-        # menu and build the demo.
+        # the native extension with Nautilus's library; Windows writes the
+        # classic menu to a scratch key and loads its native extension as
+        # Explorer does; macOS checks the menu and builds the demo.
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7

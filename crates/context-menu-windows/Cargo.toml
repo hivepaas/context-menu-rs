@@ -1,0 +1,37 @@
+[package]
+name = "context-menu-windows"
+version = "0.0.0"
+description = "A Windows Explorer extension showing a context-menu-rs menu in Windows 11's own menu: built once, named after each menu"
+readme = "../../docs/windows.md"
+keywords = ["windows", "explorer", "context-menu", "shell-extension"]
+categories = ["os::windows-apis"]
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+# cdylib: what Explorer loads. rlib: so that `cargo test` builds the library
+# its tests load (into target/<profile>/deps), which it does not for a
+# cdylib alone.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+context-menu = { path = "../context-menu" }
+
+# The workspace's lints, but `unsafe_code` is `deny` rather than `forbid`:
+# Explorer's interface is COM, and src/ffi.rs allows it there alone.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
