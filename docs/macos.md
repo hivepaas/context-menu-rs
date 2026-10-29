@@ -101,6 +101,37 @@ The system says this through `UTType`, from JavaScript for Automation (`osascrip
 - **Icons**: an image file, which `install` copies into the bundle, `Contents/Resources/icon.<ext>`, and `Info.plist` names (`NSIconName`), or one of AppKit's named images (`NSFolder`). Not an SF Symbol: Finder shows a blank document for one, so the item keeps Automator's own icon, and the notes say so. An image given by its path, or put in the workflow as data, shows nothing either.
 - **The program's output goes nowhere**, since nothing waits for it.
 
+## Open With
+
+On macOS, Open With is the app's bundle's own: Launch Services reads the file types an app opens from its `Info.plist`, and Finder offers the app in Open With for them. There is nothing to install for a user, so `open_with::install`, `is_current` and `uninstall` are `Error::Unsupported` here; the app's bundle declares the types instead, in `CFBundleDocumentTypes`:
+
+```xml
+<key>CFBundleDocumentTypes</key>
+<array>
+	<dict>
+		<key>CFBundleTypeName</key>
+		<string>Archive</string>
+		<key>CFBundleTypeRole</key>
+		<string>Viewer</string>
+		<key>LSHandlerRank</key>
+		<string>Alternate</string>
+		<key>LSItemContentTypes</key>
+		<array>
+			<string>public.zip-archive</string>
+			<string>org.gnu.gnu-zip-archive</string>
+		</array>
+	</dict>
+</array>
+```
+
+- **`LSItemContentTypes` are the files' types**, as for Quick Actions ([File types](#file-types)): `public.zip-archive` for `.zip`, `org.gnu.gnu-zip-archive` for `.gz`. For an extension no app or the system declares, the bundle declares its type too, in `UTImportedTypeDeclarations`: an identifier, the types it conforms to (`public.data`, `public.archive`), and its extensions under `UTTypeTagSpecification`, `public.filename-extension`.
+- **`CFBundleTypeRole`** is `Viewer`, or `Editor` for an app that saves them.
+- **`LSHandlerRank` `Alternate`** offers the app without putting it before the others for those files: which app opens them at a double click is the user's to choose, in Finder's Get Info, under Open with, with Change All….
+- **The files reach the app as an event, not on its command line.** Finder asks the app, starting it first if need be, to open them (AppKit's `application(_:open:)`), so the app takes them from its windowing toolkit's hook for opened files or URLs; unlike on Linux and Windows, no paths come as arguments. The menu's items still start the program with the paths as arguments, so an app with both takes paths both ways.
+- Launch Services reads the bundle when the app is in the Applications folder, or opened; `lsregister -f <app>` (in `/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support`) has it read the bundle at once, as `install` does for the native extension.
+
+This has not been tried with context-menu-rs yet.
+
 ## Trying it
 
 `cargo run --example demo -- install` writes the demo's Quick Actions; right-click a file or a folder in Finder and open Quick Actions. Choosing an item shows the paths in an alert, and writes them to `context-menu-demo.log` in `$TMPDIR`. `uninstall` takes them away, and `status` says whether `install` would change anything.

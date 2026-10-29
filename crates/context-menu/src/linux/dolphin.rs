@@ -5,7 +5,7 @@
 
 use std::fmt::Write as _;
 
-use super::quote::{exec_arg, key_value};
+use super::quote::{exec, key_value};
 use super::{Dirs, File, mark, mime, named};
 use crate::{Count, Error, Files, Item, Menu};
 
@@ -95,13 +95,7 @@ fn entry(menu: &Menu, item: &Item, types: &[String]) -> String {
     if let Some(icon) = &item.icon {
         let _ = writeln!(s, "Icon={}", key_value(icon));
     }
-    let mut exec = exec_arg(&item.program.to_string_lossy());
-    for arg in &item.args {
-        exec.push(' ');
-        exec.push_str(&exec_arg(arg));
-    }
-    exec.push_str(" %F");
-    let _ = writeln!(s, "Exec={}", key_value(&exec));
+    let _ = writeln!(s, "Exec={}", key_value(&exec(&item.program, &item.args)));
     s
 }
 

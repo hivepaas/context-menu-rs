@@ -86,6 +86,29 @@ What the classic menu can and cannot do:
 - **Icons** are an `.ico`, or an `.exe` or `.dll` with an index (`C:\Program Files\App\app.exe,0`). An icon theme's name, for Linux, is left out.
 - **The command** is the program and its arguments, each quoted as `CommandLineToArgvW` reads it back, and then `"%1"`. Windows replaces its own codes in it (`%1`, `%V`, `%L`, `%W`…), so an argument holding a `%` and a digit or one of those letters may change.
 
+## Open With
+
+`open_with::install(&handler)` puts an app in Open With for the files it opens, in the user's part of the registry, for any app, with no package and no rights beyond the user's:
+
+| Key, under `HKEY_CURRENT_USER\Software` | What it holds |
+|---|---|
+| `Classes\ContextMenuRs.<id>` (`context_menu::windows::open_with::prog_id`) | The handler's ProgID: `shell\open\command`, the program, its arguments and `"%1"`, quoted as a verb's are; `shell\open`'s `FriendlyAppName`, the name Open With shows; `DefaultIcon`, with an icon; and `Capabilities`, its name and the extensions it is for |
+| `Classes\.<extension>\OpenWithProgids` | A value named after the ProgID, among the other apps': what puts the app in Open With for those files |
+| `RegisteredApplications` | A value named after the ProgID, naming its `Capabilities`: what puts the app in Settings, Apps, Default apps |
+
+What it does:
+
+- **The app is in Open With** for each extension, in Windows 11's menu and under "Show more options", among the suggested apps, and in "Choose another app". Explorer shows it at once, with no restart.
+- **It is offered, not chosen.** Windows lets no app make itself the one that opens a type: the user does, in Open With ("Always") or in Settings. Settings has a page for the handler, listing its extensions, each with the app chosen for it, which an app can open to ask them: `context_menu::windows::open_with::settings_uri(id)`, `ms-settings:defaultapps?registeredAppUser=ContextMenuRs.<id>` (`start ms-settings:…`). After an install, the next time the user opens one of those files, Windows asks which app should, with the one chosen before first and the handler among the suggested, marked New.
+- **Windows runs the program once for each file chosen**, with its path, as for the classic menu.
+- **A file's type is its last extension**: a handler for `tar.gz` is in Open With for every `.gz` file, and the report's notes say so.
+- **Icons** are as the menu's: an `.ico`, or an `.exe` or `.dll` and an index. It is the icon of the files the user made the app open; Open With shows the program's own.
+- `install` writes the ProgID again whole, and takes it out of the extensions it is no longer for; `uninstall` takes it out of every extension's list, removes the ProgID and the value in `RegisteredApplications`, and leaves the other apps' values. A list, or an extension's key, left empty goes too. `is_current` is false when any of it is not as `install` would write it.
+
+A package (Windows 11's own menu needs one, above) can declare the file types its app opens instead, in its manifest (`windows.fileTypeAssociation`); that has not been tried with context-menu-rs. An app should not do both, or it may be in Open With twice.
+
+On Windows 11 (build 26300), with the demo's handler installed while Explorer ran: the shell listed it for `.zip`, `.7z`, `.gz` and `.zst` among the suggested apps, by its `FriendlyAppName` (the demo's program has no name of its own), and Windows 11's Open With submenu showed it first. Chosen there, and through the shell with two files, it ran once for each, with a path holding a quote and a space as it is. Settings opened on its page from `settings_uri`, with its five extensions. `.zip` still opened with File Explorer, once it was chosen in the question Windows asked, as above, which came again while it was dismissed; after `uninstall`, the demo was in no list, and the `.7z` key it had made was gone.
+
 ## Trying it
 
 `cargo run --example demo -- install` puts the demo menu in the classic menu, for files, archives and folders; choosing an item shows the paths in a message box, and writes them to `%TEMP%\context-menu-demo.log`. `uninstall` takes it away.
@@ -102,4 +125,6 @@ It registers a package for the demo, from the manifest `demo manifest` writes, w
 
 `scripts/windows/menu.ps1` prints the classic menu as the shell builds it from the registry, submenus and all, and can choose an item, with no window: `.\menu.ps1 C:\Users\me\a.zip`, or `-Choose 'context-menu demo/Archives: show their paths'`. A package's command is not in it: Explorer adds that itself.
 
-`tests/windows.rs` writes the menu to a scratch key (`HKEY_CURRENT_USER\Software\context-menu-rs-test-…`), not the one Explorer reads, and reads it back: what is written, `is_current` before and after a change, a key changed by hand, that other apps' verbs stay, and the classic menu leaving and coming back as a package serving the menu is registered and removed, with Windows's lists of packages kept under the scratch key too.
+`demo install` puts the demo in Open With for archives too; choosing it there shows the path, once for each file. `scripts/windows/open-with.ps1` prints the apps Explorer offers in Open With for an extension, as the shell lists them, and opens files with one, as Open With does, with no window: `.\open-with.ps1 .zip`, or `.\open-with.ps1 .zip -Open 'context-menu demo' C:\Users\me\a.zip C:\Users\me\b.zip`.
+
+`tests/windows.rs` writes the menu to a scratch key (`HKEY_CURRENT_USER\Software\context-menu-rs-test-…`), not the one Explorer reads, and reads it back: what is written, `is_current` before and after a change, a key changed by hand, that other apps' verbs stay, and the classic menu leaving and coming back as a package serving the menu is registered and removed, with Windows's lists of packages kept under the scratch key too. It does the same for a handler, with another app's value in an extension's list, which stays.

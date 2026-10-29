@@ -1,7 +1,8 @@
 //! Puts a demo menu in the file manager, whose items run this program again
 //! with the paths chosen; it shows them in a notification where
 //! `notify-send` is, a message box on Windows or an alert on macOS, and
-//! writes them to `context-menu-demo.log` in the temporary folder.
+//! writes them to `context-menu-demo.log` in the temporary folder. On Linux
+//! and Windows the demo is in Open With for archives too, and does the same.
 //!
 //! ```text
 //! cargo run --example demo -- install
@@ -21,27 +22,24 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use context_menu::macos::FinderExtension;
+use context_menu::open_with::{self, Handler};
 use context_menu::{Count, Item, Menu};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("install") => install(),
-        Some("uninstall") => context_menu::uninstall("context-menu-demo").map(|r| {
-            println!("removed {} files", r.removed.len());
+        Some("uninstall") => uninstall(),
+        Some("status") => current().map(|current| {
+            println!(
+                "{}",
+                if current {
+                    "current"
+                } else {
+                    "to install again"
+                }
+            );
         }),
-        Some("status") => menu()
-            .and_then(|m| context_menu::is_current(&m))
-            .map(|current| {
-                println!(
-                    "{}",
-                    if current {
-                        "current"
-                    } else {
-                        "to install again"
-                    }
-                );
-            }),
         Some("run") => {
             run(&args[1..]);
             Ok(())
@@ -65,23 +63,66 @@ fn main() -> ExitCode {
     }
 }
 
+/// Open With is an app bundle's own on macOS: there, the demo is not in it.
+const OPEN_WITH: bool = !cfg!(target_os = "macos");
+
 fn install() -> Result<(), context_menu::Error> {
-    let report = context_menu::install(&menu()?)?;
-    for path in &report.written {
-        println!("wrote {}", path.display());
+    let mut reports = vec![context_menu::install(&menu()?)?];
+    if OPEN_WITH {
+        reports.push(open_with::install(&handler()?)?);
     }
-    for note in &report.notes {
-        println!("note: {note}");
+    for report in reports {
+        for path in &report.written {
+            println!("wrote {}", path.display());
+        }
+        for note in &report.notes {
+            println!("note: {note}");
+        }
     }
     Ok(())
 }
 
-/// The demo's menu, whose items run this program.
-fn menu() -> Result<Menu, context_menu::Error> {
-    let me = std::env::current_exe().map_err(|e| context_menu::Error::Io {
+fn uninstall() -> Result<(), context_menu::Error> {
+    let mut removed = context_menu::uninstall("context-menu-demo")?.removed;
+    if OPEN_WITH {
+        removed.extend(open_with::uninstall("context-menu-demo")?.removed);
+    }
+    for path in &removed {
+        println!("removed {}", path.display());
+    }
+    Ok(())
+}
+
+/// Whether the menu, and the handler, are installed as `install` would now.
+fn current() -> Result<bool, context_menu::Error> {
+    Ok(context_menu::is_current(&menu()?)? && (!OPEN_WITH || open_with::is_current(&handler()?)?))
+}
+
+fn me() -> Result<std::path::PathBuf, context_menu::Error> {
+    std::env::current_exe().map_err(|e| context_menu::Error::Io {
         path: "the demo itself".into(),
         source: e,
-    })?;
+    })
+}
+
+/// The demo in Open With for archives, running this program as the menu's
+/// archive item does.
+fn handler() -> Result<Handler, context_menu::Error> {
+    Ok(
+        Handler::new("context-menu-demo", "context-menu demo", me()?)
+            .args(["run", "open-with"])
+            .icon(icon(
+                "package-x-generic",
+                r"System32\zipfldr.dll,0",
+                "archivebox",
+            ))
+            .extensions(["zip", "7z", "rar", "tar.gz", "tar.zst"]),
+    )
+}
+
+/// The demo's menu, whose items run this program.
+fn menu() -> Result<Menu, context_menu::Error> {
+    let me = me()?;
     Ok(Menu::new("context-menu-demo", "context-menu demo")
         .submenu(true)
         .icon(icon(

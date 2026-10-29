@@ -59,8 +59,18 @@ What `install` writes depends on the system as well as the menu: nautilus-python
 ## For an app's packages
 
 - A package for a distribution can put the native extension in Nautilus's folder ([nautilus.md](nautilus.md)), so its users get the menu at its best without nautilus-python. Short of that, recommending nautilus-python (`Recommends: python3-nautilus` on Debian and Ubuntu, `nautilus-python` on Fedora) gets the Python extension.
-- Opening a file with the app is not the right-click menu's job: a desktop entry with `MimeType=` puts the app in every file manager's Open With, with no extension.
+- For Open With, a package's own desktop entry is the place: with `MimeType=` and `%F` in its `Exec`, it puts the app in every file manager's Open With, and the package's tools update the system's cache. An app installed that way does not call `open_with::install` as well, or it is in Open With twice ([Open With](#open-with)).
 - A Flatpak's or a Snap's data folder is its own (for a Flatpak, `~/.var/app/<app id>/data`), where no file manager looks, so by default `install` writes where nothing reads it. A Flatpak needs permission to write the file managers' folders (such as `--filesystem=xdg-data/kio/servicemenus`, `xdg-data/nemo/actions` and `xdg-data/nautilus`) and `XDG_DATA_HOME` pointed back at the user's; the native extension, in the system's folders, is out of its reach.
+
+## Open With
+
+`open_with::install(&handler)` puts an app in Open With for the files it opens, for any app, with no package: in every file manager above, which take the apps for a type from GLib (Nautilus, Nemo, Thunar) or KDE (Dolphin), and in the file dialogs of the apps that use them.
+
+- **A desktop entry**, `applications/<id>.open-with.desktop` in the user's data folder (`context_menu::linux::open_with::desktop_id`), of `Type=Application`, with the handler's name, icon and `MimeType`, and `Exec` running the program with its arguments and `%F`: every file chosen, in one run. It is `NoDisplay=true`: in Open With, but not among the apps, as it is not the app's launcher.
+- **GLib's cache.** GLib finds the apps for a type through each folder's `mimeinfo.cache`, not through the entries: an entry that is not in its folder's cache is in no Open With of GLib's, and with no cache at all, none of that folder's entries are. So `install` lists the entry there, among the other apps' lines, as `update-desktop-database` would, and leaves every other line as it is; `uninstall` takes it out, and a line left with no app goes. KDE reads the entries themselves.
+- **By MIME type.** Each extension is looked up in shared-mime-info's database, as for Dolphin's menu; one it does not know is left out, and the report's notes say so. A type is matched exactly: `tar.gz` files are `application/x-compressed-tar`, not `application/gzip`, so a handler for both lists both.
+- **Offered, not chosen.** Which app opens a type at a double click is the user's, in their `mimeapps.list`, which `install` does not touch; the system's choice (such as GNOME's `gnome-mimeapps.list`) comes after it. For a type that neither chose an app for, GLib takes the first it finds, and the user's folder is the first it looks in, so the handler may be it.
+- `is_current` is false when the entry, or the cache, is not as `install` would write it: when the handler changed, when the system's MIME types for its extensions did, or when the cache was written again without it.
 
 ## Not yet
 
@@ -69,3 +79,5 @@ What `install` writes depends on the system as well as the menu: nautilus-python
 ## What has been tried
 
 The native extension is loaded as Nautilus loads it, with Nautilus's own library (`libnautilus-extension.so.4`, Nautilus 50.2 on GNOME 50), asked what it shows for choices of files, and an item chosen: see [nautilus.md](nautilus.md). The other files are tested against what each file manager's documentation and source say: the Python extension is run by Python with stand-ins for Nautilus's classes, and the scripts by `sh` with awkward paths in `NAUTILUS_SCRIPT_SELECTED_FILE_PATHS`, as Nautilus runs them. Dolphin's files pass `desktop-file-validate` but for the two errors above, and the extensions find their MIME types in a real shared-mime-info database. Thunar's file is written as Thunar writes it, checked against its source, and read back by an XML parser. None of the menus has been clicked in a running Nautilus, Dolphin, Nemo or Thunar yet.
+
+Open With: GLib's own `gio mime` (GLib 2.88) lists the handler for its types from a data folder of a test's, with the cache `install` writes, and listed none with no cache or one without the entry, which is why the cache is written; `gio launch` ran the demo's entry with a path holding a quote and spaces, which it got as it is. The entry passes `desktop-file-validate`. It has not been chosen in a running file manager's Open With yet, nor tried with KDE.

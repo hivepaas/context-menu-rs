@@ -5,7 +5,8 @@
 // A test: failing loudly is its job, in the helpers too.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use context_menu::windows::{Root, install, is_current, uninstall};
+use context_menu::open_with::Handler;
+use context_menu::windows::{Root, install, is_current, open_with, uninstall};
 use context_menu::{Count, Item, Menu};
 use winreg::RegKey;
 use winreg::enums::HKEY_CURRENT_USER;
@@ -208,4 +209,91 @@ fn a_package_serving_the_menu_takes_the_classic_one_too() {
     assert!(!is_current(&menu(), &s.root).unwrap());
     install(&menu(), &s.root).unwrap();
     assert!(c.open_subkey(r"Directory\shell\photo-kit").is_ok());
+}
+
+fn handler() -> Handler {
+    Handler::new("photo-kit", "Photo Kit", APP)
+        .arg("--open")
+        .icon(r"C:\Program Files\Photo Kit\photokit.exe,0")
+        .extensions(["jpg", "png"])
+}
+
+#[test]
+fn the_handler_goes_in_and_comes_out() {
+    let s = Scratch::new("open-with");
+    assert!(!open_with::is_current(&handler(), &s.root).unwrap());
+    // Another app's, in the same list.
+    RegKey::predef(HKEY_CURRENT_USER)
+        .create_subkey(format!(r"{}\.jpg\OpenWithProgids", s.root.classes))
+        .unwrap()
+        .0
+        .set_value("Theirs.jpg", &String::new())
+        .unwrap();
+
+    let r = open_with::install(&handler(), &s.root).unwrap();
+    let c = s.classes();
+    let name = |path: &str| format!(r"HKEY_CURRENT_USER\{}\{path}", s.root.classes);
+    let names: Vec<String> = r.written.iter().map(|p| p.display().to_string()).collect();
+    assert_eq!(
+        names,
+        [
+            name("ContextMenuRs.photo-kit"),
+            name(r".jpg\OpenWithProgids\ContextMenuRs.photo-kit"),
+            name(r".png\OpenWithProgids\ContextMenuRs.photo-kit"),
+            format!(
+                r"HKEY_CURRENT_USER\{}\RegisteredApplications\ContextMenuRs.photo-kit",
+                s.key
+            ),
+        ]
+    );
+    assert!(open_with::is_current(&handler(), &s.root).unwrap());
+    let command = c
+        .open_subkey(r"ContextMenuRs.photo-kit\shell\open\command")
+        .unwrap();
+    assert_eq!(
+        command.get_value::<String, _>("").unwrap(),
+        r#""C:\Program Files\Photo Kit\photokit.exe" "--open" "%1""#
+    );
+    let registered = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(format!(r"{}\RegisteredApplications", s.key))
+        .unwrap();
+    assert_eq!(
+        registered
+            .get_value::<String, _>("ContextMenuRs.photo-kit")
+            .unwrap(),
+        format!(r"{}\ContextMenuRs.photo-kit\Capabilities", s.root.classes)
+    );
+
+    // For fewer files: out of the list of the one it is no longer for, and
+    // the list and the extension's key with it, as nothing else is there.
+    let fewer = Handler {
+        extensions: vec!["jpg".into()],
+        ..handler()
+    };
+    assert!(!open_with::is_current(&fewer, &s.root).unwrap());
+    let r = open_with::install(&fewer, &s.root).unwrap();
+    assert_eq!(r.removed.len(), 1, "{:?}", r.removed);
+    assert!(c.open_subkey(".png").is_err());
+    assert!(open_with::is_current(&fewer, &s.root).unwrap());
+
+    // Changed by hand.
+    c.open_subkey_with_flags(
+        r"ContextMenuRs.photo-kit\shell\open",
+        winreg::enums::KEY_WRITE,
+    )
+    .unwrap()
+    .set_value("FriendlyAppName", &"Mine")
+    .unwrap();
+    assert!(!open_with::is_current(&fewer, &s.root).unwrap());
+
+    let r = open_with::uninstall("photo-kit", &s.root).unwrap();
+    assert_eq!(r.removed.len(), 3, "{:?}", r.removed);
+    assert!(c.open_subkey("ContextMenuRs.photo-kit").is_err());
+    assert!(registered.get_raw_value("ContextMenuRs.photo-kit").is_err());
+    // The other app's stays.
+    let jpg = c.open_subkey(r".jpg\OpenWithProgids").unwrap();
+    assert!(jpg.get_raw_value("Theirs.jpg").is_ok());
+    assert!(jpg.get_raw_value("ContextMenuRs.photo-kit").is_err());
+    let again = open_with::uninstall("photo-kit", &s.root).unwrap();
+    assert!(again.removed.is_empty(), "{:?}", again.removed);
 }

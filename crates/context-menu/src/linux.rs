@@ -3,12 +3,13 @@
 //! its custom actions in the user's config folder. Every file manager gets
 //! its files, installed or not, so the menu is there when one is; and the
 //! menu's definition goes in `context-menu-rs/<id>.menu`, for the native
-//! extensions. See `docs/linux.md`.
+//! extensions. Open With is [`open_with`]'s. See `docs/linux.md`.
 
 mod dolphin;
 mod mime;
 mod nautilus;
 mod nemo;
+pub mod open_with;
 mod quote;
 mod thunar;
 
