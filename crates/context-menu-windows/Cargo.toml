@@ -1,6 +1,6 @@
 [package]
 name = "context-menu-windows"
-version = "0.0.0"
+version = "0.1.0"
 description = "A Windows Explorer extension showing a context-menu-rs menu in Windows 11's own menu: built once, named after each menu"
 readme = "../../docs/windows.md"
 keywords = ["windows", "explorer", "context-menu", "shell-extension"]

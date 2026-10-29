@@ -1,6 +1,6 @@
 [package]
 name = "context-menu-finder"
-version = "0.0.0"
+version = "0.1.0"
 description = "A Finder Sync extension showing a context-menu-rs menu in Finder's own menu: built once, held in each app's bundle"
 readme = "../../docs/macos.md"
 keywords = ["macos", "finder", "context-menu", "finder-sync"]

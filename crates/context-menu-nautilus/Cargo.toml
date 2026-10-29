@@ -1,6 +1,6 @@
 [package]
 name = "context-menu-nautilus"
-version = "0.0.0"
+version = "0.1.0"
 description = "A native Nautilus extension showing a context-menu-rs menu: built once, named after each menu"
 readme = "../../docs/nautilus.md"
 keywords = ["nautilus", "context-menu", "gnome", "file-manager"]
