@@ -404,9 +404,16 @@ fn the_extension_shows_the_menu_in_explorer() {
         std::thread::sleep(Duration::from_millis(100));
     }
     let text = std::fs::read_to_string(&ran).unwrap();
-    let lines: Vec<&str> = text.trim_start_matches('\u{feff}').lines().collect();
-    let expected: Vec<String> = chosen.iter().map(|p| p.display().to_string()).collect();
-    assert_eq!(lines, expected);
+    // The shell gives long names, where the temporary folder may have a
+    // short one (`RUNNER~1`): the same files, told apart by their full names.
+    let full = |p: &Path| std::fs::canonicalize(p).unwrap();
+    let got: Vec<PathBuf> = text
+        .trim_start_matches('\u{feff}')
+        .lines()
+        .map(|l| full(Path::new(l)))
+        .collect();
+    let expected: Vec<PathBuf> = chosen.iter().map(|p| full(p)).collect();
+    assert_eq!(got, expected);
 
     // A menu not installed for the user shows nothing.
     std::fs::remove_file(&definition).unwrap();
