@@ -36,8 +36,11 @@ cargo build --example demo
 cargo build -p context-menu-finder
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp target/debug/examples/demo "$APP/Contents/MacOS/demo"
+# An icon in the app's own bundle, for the menu: one of the system's.
+cp /System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/ToolbarCustomizeIcon.icns \
+  "$APP/Contents/Resources/demo.icns"
 for bundle in Contents/PlugIns/ContextMenu.appex Contents/Helpers/ContextMenuHelper.app; do
   mkdir -p "$APP/$bundle/Contents/MacOS"
   cp target/debug/context-menu-finder "$APP/$bundle/Contents/MacOS/"

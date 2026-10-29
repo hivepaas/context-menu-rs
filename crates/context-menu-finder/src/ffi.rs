@@ -19,18 +19,18 @@ use block2::RcBlock;
 use context_menu::macos::{GROUP_KEY, HELPER_PATH, MENU_KEY};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
-use objc2::{ClassType, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
+use objc2::{AnyThread, ClassType, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSMenu, NSMenuItem, NSWorkspace, NSWorkspaceDidMountNotification,
+    NSImage, NSMenu, NSMenuItem, NSWorkspace, NSWorkspaceDidMountNotification,
     NSWorkspaceDidUnmountNotification, NSWorkspaceOpenConfiguration,
 };
 use objc2_finder_sync::{FIFinderSync, FIFinderSyncController, FIFinderSyncProtocol, FIMenuKind};
 use objc2_foundation::{
-    NSBundle, NSFileManager, NSNotification, NSOperationQueue, NSSet, NSString, NSURL,
+    NSBundle, NSFileManager, NSNotification, NSOperationQueue, NSSet, NSSize, NSString, NSURL,
     NSVolumeEnumerationOptions, ns_string,
 };
 
-use super::{Picked, Request, command, leave, load, requests, shown, take};
+use super::{Icon, Picked, Request, command, leave, load, requests, shown, take};
 
 unsafe extern "C" {
     /// Foundation's entry point for an app extension: it makes the
@@ -182,6 +182,25 @@ fn picked() -> Vec<Picked> {
     .unwrap_or_default()
 }
 
+/// The image an icon names, at a menu's size, or none when it names none
+/// the extension can have: a name the system does not know, as a symbol or
+/// one of AppKit's images, or a file it cannot read, such as one outside its
+/// sandbox, which `install` copies the menu's into.
+fn image(icon: &str) -> Option<Retained<NSImage>> {
+    let image = match Icon::of(icon) {
+        Icon::File(path) => {
+            NSImage::initWithContentsOfFile(NSImage::alloc(), &NSString::from_str(path))?
+        }
+        Icon::Named(name) => {
+            let name = NSString::from_str(name);
+            NSImage::imageWithSystemSymbolName_accessibilityDescription(&name, None)
+                .or_else(|| NSImage::imageNamed(&name))?
+        }
+    };
+    image.setSize(NSSize::new(16.0, 16.0));
+    Some(image)
+}
+
 /// The menu for the files chosen: the items that apply to them, in a
 /// submenu when the menu asks for one; none when no item does.
 fn menu(kind: FIMenuKind) -> Option<Retained<NSMenu>> {
@@ -215,6 +234,7 @@ fn menu(kind: FIMenuKind) -> Option<Retained<NSMenu>> {
             )
         };
         entry.setTag(isize::try_from(place).ok()?);
+        entry.setImage(item.icon.as_deref().and_then(image).as_deref());
         target.addItem(&entry);
     }
     if menu.submenu {
@@ -228,6 +248,7 @@ fn menu(kind: FIMenuKind) -> Option<Retained<NSMenu>> {
             )
         };
         parent.setSubmenu(Some(&target));
+        parent.setImage(menu.icon.as_deref().and_then(image).as_deref());
         root.addItem(&parent);
     }
     Some(root)

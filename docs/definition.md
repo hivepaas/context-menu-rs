@@ -16,7 +16,7 @@ The menu's fields come first. A line `item` starts an item, with its id, and the
 |---|---|---|
 | `id` | the menu | Its id: 1 to 64 lower-case ASCII letters, digits and inner `-` |
 | `title` | the menu | The submenu's label |
-| `icon` | the menu, an item | An icon theme's name, or an absolute path to an image |
+| `icon` | the menu, an item | An icon, as `Item::icon` has it for the system: an icon theme's or a symbol's name, or a path. On macOS, `install` writes the path of the copy it makes of an image file, which the sandboxed extension can read |
 | `submenu` | the menu | `true` or `false`: the items grouped under one entry |
 | `item` | | Starts an item; its id, as the menu's |
 | `label` | an item | What the menu says |

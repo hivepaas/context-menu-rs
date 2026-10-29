@@ -84,23 +84,36 @@ fn menu() -> Result<Menu, context_menu::Error> {
     })?;
     Ok(Menu::new("context-menu-demo", "context-menu demo")
         .submenu(true)
-        .icon(icon("applications-utilities", "explorer.exe,0"))
+        .icon(icon(
+            "applications-utilities",
+            "explorer.exe,0",
+            &app_icon(&me),
+        ))
         .item(
             Item::new("archives", "Archives: show their paths", &me)
                 .args(["run", "archives"])
-                .icon(icon("package-x-generic", r"System32\zipfldr.dll,0"))
+                .icon(icon(
+                    "package-x-generic",
+                    r"System32\zipfldr.dll,0",
+                    "archivebox",
+                ))
                 .extensions(["zip", "7z", "rar", "tar.gz", "tar.zst"]),
         )
         .item(
             Item::new("anything", "Anything: show the paths", &me)
                 .args(["run", "anything"])
-                .icon(icon("text-x-generic", r"System32\shell32.dll,0"))
+                .icon(icon(
+                    "text-x-generic",
+                    r"System32\shell32.dll,0",
+                    "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/\
+                     GenericDocumentIcon.icns",
+                ))
                 .folders(true),
         )
         .item(
             Item::new("one-folder", "One folder: show its path", &me)
                 .args(["run", "one-folder"])
-                .icon(icon("folder", r"System32\shell32.dll,3"))
+                .icon(icon("folder", r"System32\shell32.dll,3", "NSFolder"))
                 .folders_only()
                 .count(Count::One),
         ))
@@ -232,14 +245,29 @@ fn app_plist() -> String {
 }
 
 /// An icon: a theme's name on Linux; on Windows, one of its own, in a file
-/// of the Windows folder, with its index.
-fn icon(name: &str, windows: &str) -> String {
+/// of the Windows folder, with its index; on macOS, a symbol's name or an
+/// image's path.
+fn icon(name: &str, windows: &str, macos: &str) -> String {
     if cfg!(windows) {
         let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
         format!(r"{root}\{windows}")
+    } else if cfg!(target_os = "macos") {
+        macos.to_string()
     } else {
         name.to_string()
     }
+}
+
+/// On macOS, the icon of the app the demo is in, as `scripts/macos/demo-app.sh`
+/// puts one there: a file in the app's own bundle. Out of one, a symbol.
+fn app_icon(me: &Path) -> String {
+    me.ancestors()
+        .find(|a| a.extension().is_some_and(|e| e == "app"))
+        .map(|app| app.join("Contents/Resources/demo.icns"))
+        .filter(|icon| icon.is_file())
+        .map_or("contextualmenu.and.cursorarrow".into(), |icon| {
+            icon.display().to_string()
+        })
 }
 
 /// What an item runs: `run <item> <paths>...`.

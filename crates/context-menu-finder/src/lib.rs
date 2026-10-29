@@ -86,6 +86,25 @@ fn shown<'m>(menu: &'m Menu, picked: &[Picked]) -> Vec<(usize, &'m Item)> {
         .collect()
 }
 
+/// What an icon names on macOS: an image file, by its absolute path; or by
+/// its name one of the system's symbols (SF Symbols), such as `archivebox`,
+/// or one of AppKit's named images, such as `NSFolder`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Icon<'a> {
+    File(&'a str),
+    Named(&'a str),
+}
+
+impl<'a> Icon<'a> {
+    fn of(icon: &'a str) -> Icon<'a> {
+        if icon.starts_with('/') {
+            Icon::File(icon)
+        } else {
+            Icon::Named(icon)
+        }
+    }
+}
+
 /// An item chosen, which the extension leaves for the helper: the item's
 /// id, and the paths chosen. Not the program: the helper takes that from
 /// the menu's definition.
@@ -363,6 +382,16 @@ mod tests {
             shown(&m, &[pick("x", true)])[0].0,
             2,
             "its place in the menu"
+        );
+    }
+
+    #[test]
+    fn icons_are_files_or_symbols() {
+        assert_eq!(Icon::of("archivebox"), Icon::Named("archivebox"));
+        assert_eq!(Icon::of("NSFolder"), Icon::Named("NSFolder"));
+        assert_eq!(
+            Icon::of("/Applications/Photo Kit.app/Contents/Resources/zip.png"),
+            Icon::File("/Applications/Photo Kit.app/Contents/Resources/zip.png")
         );
     }
 
