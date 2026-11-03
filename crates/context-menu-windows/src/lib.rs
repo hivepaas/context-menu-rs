@@ -54,52 +54,54 @@ impl Picked {
     }
 }
 
-/// One of the extension's commands, as Explorer holds them: the menu's own,
-/// or one of its items by id.
+/// One of the extension's commands, as Explorer holds them: the menu's own
+/// entry, one of the package's entries for the items by its place
+/// (`context_menu::windows::entry_clsid`), or an item of the submenu by id.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Command {
     Menu,
+    Entry(usize),
     Item(String),
 }
 
-/// Windows 11's menu takes one entry for the menu: the menu's single item
-/// itself, when it has one and no submenu; otherwise a submenu, which
-/// Explorer is told of before anything is chosen.
-fn single(menu: &Menu) -> Option<&Item> {
-    match menu.items.as_slice() {
-        [item] if !menu.submenu => Some(item),
-        _ => None,
-    }
+/// Whether the items are under the menu's own entry, as a submenu: when it
+/// asks for one, or has more items than Windows 11's menu has entries for.
+/// Otherwise each item is an entry of its own, and the menu's is hidden.
+fn grouped(menu: &Menu) -> bool {
+    menu.submenu || menu.items.len() > context_menu::windows::ENTRIES
 }
 
-/// The item a command runs, if it runs one.
+/// The item a command runs, if it runs one: an entry its item, when the
+/// items are not grouped.
 fn item<'m>(menu: &'m Menu, command: &Command) -> Option<&'m Item> {
     match command {
-        Command::Menu => single(menu),
+        Command::Menu => None,
+        Command::Entry(n) => menu.items.get(*n).filter(|_| !grouped(menu)),
         Command::Item(id) => menu.items.iter().find(|i| &i.id == id),
     }
 }
 
 /// The command's label.
 fn title(menu: &Menu, command: &Command) -> Option<String> {
-    match (command, item(menu, command)) {
-        (Command::Menu, None) => Some(menu.title.clone()),
-        (_, item) => item.map(|i| i.label.clone()),
+    match command {
+        Command::Menu => Some(menu.title.clone()),
+        _ => item(menu, command).map(|i| i.label.clone()),
     }
 }
 
 /// The command's icon, if Windows can use it.
 fn icon(menu: &Menu, command: &Command) -> Option<String> {
-    let icon = match (command, item(menu, command)) {
-        (Command::Menu, None) => menu.icon.as_ref(),
-        (_, item) => item.and_then(|i| i.icon.as_ref()),
+    let icon = match command {
+        Command::Menu => menu.icon.as_ref(),
+        _ => item(menu, command).and_then(|i| i.icon.as_ref()),
     }?;
     context_menu::windows::is_icon(icon).then(|| icon.clone())
 }
 
-/// Whether the menu's entry holds the items.
-fn has_items(menu: &Menu) -> bool {
-    single(menu).is_none()
+/// Whether the command is the menu's entry holding the items: Explorer asks
+/// before anything is chosen.
+fn has_items(menu: &Menu, command: &Command) -> bool {
+    *command == Command::Menu && grouped(menu)
 }
 
 /// Whether the command shows for the files picked: the menu's when any of
@@ -116,9 +118,9 @@ fn shows(menu: &Menu, command: &Command, picked: &[Picked]) -> bool {
         })
         .collect();
     let accepts = |i: &Item| i.applies_to.accepts(&chosen);
-    match (command, item(menu, command)) {
-        (Command::Menu, None) => menu.items.iter().any(accepts),
-        (_, item) => item.is_some_and(accepts),
+    match command {
+        Command::Menu => grouped(menu) && menu.items.iter().any(accepts),
+        _ => item(menu, command).is_some_and(accepts),
     }
 }
 
@@ -160,6 +162,7 @@ mod tests {
 
     fn menu() -> Menu {
         Menu::new("photo-kit", "Photo Kit")
+            .submenu(true)
             .icon(r"C:\Program Files\Photo Kit\photokit.exe,0")
             .item(
                 Item::new("resize", "Resize", APP)
@@ -203,7 +206,13 @@ mod tests {
     fn the_menu_shows_when_an_item_does() {
         let m = menu();
         let jpg = [pick("a.JPG", false)];
-        assert!(has_items(&m));
+        assert!(has_items(&m, &Command::Menu));
+        for n in 0..context_menu::windows::ENTRIES {
+            assert!(
+                !shows(&m, &Command::Entry(n), &jpg),
+                "entry {n} with a submenu"
+            );
+        }
         assert_eq!(title(&m, &Command::Menu).as_deref(), Some("Photo Kit"));
         assert!(shows(&m, &Command::Menu, &jpg));
         assert!(!shows(&m, &Command::Menu, &[pick("a.txt", false)]));
@@ -239,15 +248,51 @@ mod tests {
     }
 
     #[test]
-    fn a_single_item_is_the_entry() {
-        let m = Menu::new("photo-kit", "Photo Kit")
-            .item(Item::new("resize", "Resize", APP).extensions(["jpg"]));
-        assert!(!has_items(&m));
-        assert_eq!(title(&m, &Command::Menu).as_deref(), Some("Resize"));
-        assert!(shows(&m, &Command::Menu, &[pick("a.jpg", false)]));
-        assert!(!shows(&m, &Command::Menu, &[pick("a.png", false)]));
-        // Asked for, a submenu it is.
-        assert!(has_items(&m.clone().submenu(true)));
+    fn with_no_submenu_each_item_is_an_entry() {
+        let m = menu().submenu(false);
+        let jpg = [pick("a.jpg", false)];
+        // The menu's own entry is hidden, and holds nothing.
+        assert!(!has_items(&m, &Command::Menu));
+        assert!(!shows(&m, &Command::Menu, &jpg));
+        // Each entry is its item, in the menu's order, and shows as it does.
+        let titles: Vec<_> = (0..3).map(|n| title(&m, &Command::Entry(n))).collect();
+        assert_eq!(
+            titles,
+            [
+                Some("Resize".into()),
+                Some("Compare".into()),
+                Some("Pack".into())
+            ]
+        );
+        assert!(shows(&m, &Command::Entry(0), &jpg));
+        assert!(!shows(&m, &Command::Entry(1), &jpg), "Compare takes two");
+        assert!(!has_items(&m, &Command::Entry(0)));
+        assert_eq!(
+            icon(&m, &Command::Entry(1)).as_deref(),
+            Some(r"C:\Program Files\Photo Kit\compare.ico")
+        );
+        // The entries past the items are hidden.
+        assert_eq!(title(&m, &Command::Entry(3)), None);
+        assert!(!shows(&m, &Command::Entry(3), &jpg));
+        let run = action(&m, &Command::Entry(0), &jpg).expect("Resize runs");
+        assert_eq!(run.get_args().next(), Some("--resize".as_ref()));
+    }
+
+    #[test]
+    fn more_items_than_entries_are_a_submenu() {
+        let n = context_menu::windows::ENTRIES;
+        let m = (0..=n).fold(Menu::new("photo-kit", "Photo Kit"), |m, i| {
+            m.item(Item::new(format!("i{i}"), format!("Item {i}"), APP))
+        });
+        let a = [pick("a.txt", false)];
+        assert!(has_items(&m, &Command::Menu));
+        assert!(shows(&m, &Command::Menu, &a));
+        assert!(!shows(&m, &Command::Entry(0), &a));
+        // One fewer, they are entries.
+        let mut fewer = m.clone();
+        fewer.items.pop();
+        assert!(!has_items(&fewer, &Command::Menu));
+        assert!(shows(&fewer, &Command::Entry(n - 1), &a));
     }
 
     #[test]

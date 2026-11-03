@@ -257,8 +257,9 @@ fn scratch() -> PathBuf {
     dir
 }
 
-/// The menu's command, from the extension at `dll` as COM gets it.
-fn menu_command(dll: &Path, id: &str) -> Cmd {
+/// The command of the class `clsid`, from the extension at `dll` as COM gets
+/// it: the extension knows the classes of the menu `id` alone.
+fn command(dll: &Path, clsid: &str) -> Cmd {
     let module = unsafe { LoadLibraryW(wide(dll.as_os_str()).as_ptr()) };
     assert!(!module.is_null(), "{} does not load", dll.display());
     let entry = unsafe { GetProcAddress(module, c"DllGetClassObject".as_ptr().cast()) };
@@ -278,7 +279,7 @@ fn menu_command(dll: &Path, id: &str) -> Cmd {
         S_OK,
         "another menu's class"
     );
-    let clsid = Guid::parse(&windows::clsid(id));
+    let clsid = Guid::parse(clsid);
     assert_eq!(unsafe { get_class(&clsid, &iid, &mut factory) }, S_OK);
     let fv: &FactoryVtbl = unsafe { vtbl(factory) };
     let mut command = null_mut();
@@ -362,7 +363,7 @@ fn the_extension_shows_the_menu_in_explorer() {
         unsafe { CoInitializeEx(null_mut(), COINIT_APARTMENTTHREADED) },
         S_OK
     );
-    let root = menu_command(&dll, "photo-kit");
+    let root = command(&dll, &windows::clsid("photo-kit"));
     assert_eq!(root.title(), "Photo Kit");
     assert_eq!(root.flags(), ECF_HASSUBCOMMANDS);
     let items = root.items();
@@ -415,7 +416,28 @@ fn the_extension_shows_the_menu_in_explorer() {
     let expected: Vec<PathBuf> = chosen.iter().map(|p| full(p)).collect();
     assert_eq!(got, expected);
 
+    // With no submenu, each item is an entry of its own, in the menu's order,
+    // and the menu's entry is hidden; the entries past the items are too.
+    std::fs::write(&definition, menu.clone().submenu(false).to_definition()).unwrap();
+    let zip = Chosen::of(&[files.join("a b.zip")]);
+    assert!(!root.shows(&zip));
+    assert_ne!(root.flags(), ECF_HASSUBCOMMANDS);
+    let entries: Vec<Cmd> = (0..windows::ENTRIES)
+        .map(|n| command(&dll, &windows::entry_clsid("photo-kit", n)))
+        .collect();
+    let shown: Vec<String> = entries
+        .iter()
+        .filter(|e| e.shows(&zip))
+        .map(Cmd::title)
+        .collect();
+    assert_eq!(shown, ["Archives", "Anything"]);
+    assert_ne!(entries[0].flags(), ECF_HASSUBCOMMANDS);
+    assert_eq!(entries[1].icon().as_deref(), Some(icon));
+    assert!(entries[2].shows(&Chosen::of(&[files.join("p")])));
+    assert!(!entries[3].shows(&zip));
+
     // A menu not installed for the user shows nothing.
     std::fs::remove_file(&definition).unwrap();
-    assert!(!root.shows(&Chosen::of(&[files.join("a b.zip")])));
+    assert!(!root.shows(&zip));
+    assert!(!entries[0].shows(&zip));
 }

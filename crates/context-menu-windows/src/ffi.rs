@@ -345,9 +345,11 @@ impl Interface for FactoryVtbl {
     const IID: Guid = IID_ICLASSFACTORY;
 }
 
-/// The factory of the menu `id`'s commands.
+/// The factory of a command of the menu `id`: its own entry, or one of the
+/// entries for its items, by the class asked for.
 struct Factory {
     id: String,
+    command: Command,
 }
 
 static FACTORY: FactoryVtbl = FactoryVtbl {
@@ -374,14 +376,12 @@ unsafe extern "system" fn create_instance(
             return CLASS_E_NOAGGREGATION;
         }
         // SAFETY: `this` is a factory.
-        let id = unsafe { Object::<FactoryVtbl, Factory>::of(this) }
-            .id
-            .clone();
+        let factory = unsafe { Object::<FactoryVtbl, Factory>::of(this) };
         let command = Object::create(
             &COMMAND,
             Cmd {
-                id,
-                command: Command::Menu,
+                id: factory.id.clone(),
+                command: factory.command.clone(),
             },
         );
         // SAFETY: `command` is ours, with the one reference given back.
@@ -554,7 +554,7 @@ unsafe extern "system" fn get_flags(this: Raw, out: *mut u32) -> Hresult {
         }
         // SAFETY: `this` is a command.
         let c = unsafe { cmd(this) };
-        let submenu = c.command == Command::Menu && load(&c.id).is_ok_and(|m| has_items(&m));
+        let submenu = load(&c.id).is_ok_and(|m| has_items(&m, &c.command));
         // SAFETY: `out` is the caller's.
         unsafe {
             *out = if submenu {
@@ -578,7 +578,7 @@ unsafe extern "system" fn enum_sub_commands(this: Raw, out: *mut Raw) -> Hresult
             cmd(this)
         };
         let menu = match load(&c.id) {
-            Ok(m) if c.command == Command::Menu && has_items(&m) => m,
+            Ok(m) if has_items(&m, &c.command) => m,
             _ => return E_NOTIMPL,
         };
         let list = Object::create(
@@ -716,8 +716,10 @@ unsafe extern "system" fn clone(this: Raw, out: *mut Raw) -> Hresult {
 
 // What the library exports.
 
-/// Hands out the factory of the menu's commands, when `clsid` is the class
-/// of the menu this library's name says (`context_menu::windows::clsid`).
+/// Hands out the factory of a command of the menu this library's name says,
+/// when `clsid` is one of its classes: the menu's own
+/// (`context_menu::windows::clsid`), or an entry's
+/// (`context_menu::windows::entry_clsid`).
 ///
 /// # Safety
 ///
@@ -740,10 +742,24 @@ pub unsafe extern "system" fn DllGetClassObject(
         let Some(id) = own_id() else {
             return CLASS_E_CLASSNOTAVAILABLE;
         };
-        if clsid.text() != context_menu::windows::clsid(id) {
-            return CLASS_E_CLASSNOTAVAILABLE;
-        }
-        let factory = Object::create(&FACTORY, Factory { id: id.to_string() });
+        let text = clsid.text();
+        let command = if text == context_menu::windows::clsid(id) {
+            Command::Menu
+        } else {
+            match (0..context_menu::windows::ENTRIES)
+                .find(|&n| text == context_menu::windows::entry_clsid(id, n))
+            {
+                Some(n) => Command::Entry(n),
+                None => return CLASS_E_CLASSNOTAVAILABLE,
+            }
+        };
+        let factory = Object::create(
+            &FACTORY,
+            Factory {
+                id: id.to_string(),
+                command,
+            },
+        );
         // SAFETY: `factory` is ours, with the one reference given back.
         unsafe {
             let hr = query_interface::<FactoryVtbl, Factory>(factory, iid, out);

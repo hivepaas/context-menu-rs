@@ -254,17 +254,36 @@ pub fn native_name(id: &str) -> String {
     format!("context-menu-{id}.dll")
 }
 
+/// How many of a menu's items Windows 11's own menu shows as entries of
+/// their own, with no submenu: the package declares an entry for each
+/// ([`package_extensions`], [`entry_clsid`]). A menu with a submenu, or with
+/// more items than this, is one entry there, holding them all.
+pub const ENTRIES: usize = 8;
+
 /// The COM class of the native extension serving the menu `id`, as an app's
 /// package declares it: a GUID made from the id alone (RFC 9562's version
 /// 5), so the extension knows it too, in upper case with no braces.
 pub fn clsid(id: &str) -> String {
+    uuid5(id)
+}
+
+/// The COM class of the entry `n` (from 0, below [`ENTRIES`]) of the menu
+/// `id`, which shows its item `n` when the menu has no submenu: a GUID made
+/// from `<id>/<n>` as [`clsid`]'s is, which no menu's id is.
+pub fn entry_clsid(id: &str, n: usize) -> String {
+    uuid5(&format!("{id}/{n}"))
+}
+
+/// A GUID of RFC 9562's version 5 in context-menu-rs's namespace, in upper
+/// case with no braces.
+fn uuid5(text: &str) -> String {
     // context-menu-rs's own namespace, ae650857-d795-49b3-ad8d-995659ed5e7b.
     const NAMESPACE: [u8; 16] = [
         0xae, 0x65, 0x08, 0x57, 0xd7, 0x95, 0x49, 0xb3, 0xad, 0x8d, 0x99, 0x56, 0x59, 0xed, 0x5e,
         0x7b,
     ];
     let mut name = NAMESPACE.to_vec();
-    name.extend_from_slice(id.as_bytes());
+    name.extend_from_slice(text.as_bytes());
     let hash = sha1(&name);
     let mut out = String::with_capacity(36);
     for (i, b) in hash.iter().take(16).enumerate() {
@@ -284,28 +303,43 @@ pub fn clsid(id: &str) -> String {
 /// What an app's package manifest declares for the menu `id`, inside its
 /// `<Application>`'s `<Extensions>`: Windows 11's menu, for any file and
 /// any folder, served by the native extension under its name, in the
-/// package's folder. The manifest declares the namespaces `desktop4`,
-/// `desktop5` and `com`. See `docs/windows.md`.
+/// package's folder. Its entries are the menu's own, which holds the items
+/// as a submenu, and [`ENTRIES`] more, each of which is an item when the
+/// menu has no submenu; the extension hides those it does not show. The
+/// manifest declares the namespaces `desktop4`, `desktop5` and `com`. See
+/// `docs/windows.md`.
 pub fn package_extensions(id: &str) -> String {
-    let clsid = clsid(id);
     let name = native_name(id);
     let verb: String = id.chars().filter(char::is_ascii_alphanumeric).collect();
+    // The menu's entry, then the items', in their order.
+    let classes: Vec<(String, String)> = std::iter::once((String::new(), clsid(id)))
+        .chain((0..ENTRIES).map(|n| (n.to_string(), entry_clsid(id, n))))
+        .collect();
+    let verbs: String = classes
+        .iter()
+        .map(|(n, clsid)| {
+            format!("      <desktop5:Verb Id=\"ContextMenuRs{verb}{n}\" Clsid=\"{clsid}\" />\n")
+        })
+        .collect();
+    let servers: String = classes
+        .iter()
+        .map(|(_, clsid)| {
+            format!("      <com:Class Id=\"{clsid}\" Path=\"{name}\" ThreadingModel=\"STA\" />\n")
+        })
+        .collect();
     format!(
         r#"<desktop4:Extension Category="windows.fileExplorerContextMenus">
   <desktop4:FileExplorerContextMenus>
     <desktop5:ItemType Type="*">
-      <desktop5:Verb Id="ContextMenuRs{verb}" Clsid="{clsid}" />
-    </desktop5:ItemType>
+{verbs}    </desktop5:ItemType>
     <desktop5:ItemType Type="Directory">
-      <desktop5:Verb Id="ContextMenuRs{verb}" Clsid="{clsid}" />
-    </desktop5:ItemType>
+{verbs}    </desktop5:ItemType>
   </desktop4:FileExplorerContextMenus>
 </desktop4:Extension>
 <com:Extension Category="windows.comServer">
   <com:ComServer>
     <com:SurrogateServer DisplayName="{id}">
-      <com:Class Id="{clsid}" Path="{name}" ThreadingModel="STA" />
-    </com:SurrogateServer>
+{servers}    </com:SurrogateServer>
   </com:ComServer>
 </com:Extension>
 "#
@@ -429,6 +463,32 @@ mod tests {
         assert!(xml.contains(r#"Clsid="E09045CE-CCB6-5DBD-8BE4-F08B7DEB3BFC""#));
         assert!(xml.contains(r#"Path="context-menu-photo-kit.dll""#));
         assert!(xml.contains(r#"Id="ContextMenuRsphotokit""#));
+    }
+
+    #[test]
+    fn each_entry_has_its_own_class_too() {
+        // As Python's uuid.uuid5 makes them, of "packwing/0".
+        assert_eq!(
+            entry_clsid("packwing", 0),
+            "92473EBC-49D3-5DB8-9A61-FBFF52747221"
+        );
+        let mut all: Vec<String> = (0..ENTRIES).map(|n| entry_clsid("photo-kit", n)).collect();
+        all.push(clsid("photo-kit"));
+        all.sort();
+        all.dedup();
+        assert_eq!(all.len(), ENTRIES + 1);
+        // Each is declared once for files and once for folders, and served once.
+        let xml = package_extensions("photo-kit");
+        for (n, clsid) in (0..ENTRIES).map(|n| (n, entry_clsid("photo-kit", n))) {
+            let verb =
+                format!(r#"<desktop5:Verb Id="ContextMenuRsphotokit{n}" Clsid="{clsid}" />"#);
+            assert_eq!(xml.matches(&verb).count(), 2, "{verb}");
+            assert_eq!(
+                xml.matches(&format!(r#"<com:Class Id="{clsid}""#)).count(),
+                1
+            );
+        }
+        assert_eq!(xml.matches("<desktop5:Verb ").count(), 2 * (ENTRIES + 1));
     }
 
     #[test]
