@@ -2,7 +2,7 @@
 
 Put your app in the right-click menu of the system's file manager, from Rust: Windows Explorer, macOS Finder and the file managers of Linux, from one description of the menu. And in their Open With, for the files your app opens.
 
-> **Status:** early development: 0.2.0 adds Open With. Linux, Windows and macOS work.
+> **Status:** early development: 0.2.0 added Open With; 0.2.1 says which package serves a menu on Windows (`windows::serving_package`). Linux, Windows and macOS work.
 
 ## ✨ Usage
 
