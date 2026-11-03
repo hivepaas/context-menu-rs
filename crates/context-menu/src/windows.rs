@@ -366,6 +366,29 @@ fn sha1(data: &[u8]) -> [u8; 20] {
     out
 }
 
+/// The package that serves the menu `id` with the native extension, when one
+/// declaring its class is registered for the current user: its full name.
+/// Then the menu is the package's in Windows 11's own menu and in the
+/// classic one, where Windows shows the package's command in place of the
+/// verbs: one entry, holding the items as a submenu whatever
+/// [`Menu::submenu`] says, unless the menu has a single item. A package's
+/// commands are one entry (Windows groups several under one named after the
+/// package), so an app can tell its users that. None on other systems, and
+/// where Windows says nothing of packages.
+pub fn serving_package(id: &str) -> Option<String> {
+    #[cfg(windows)]
+    {
+        registry::Root::current()
+            .ok()
+            .and_then(|root| registry::package(id, &root))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = id;
+        None
+    }
+}
+
 pub mod open_with;
 #[cfg(windows)]
 mod registry;
@@ -415,6 +438,11 @@ mod tests {
             hex(&[b'a'; 1000]),
             "291e9a6c66994949b57ba5e650361e98fc36b1ba"
         );
+    }
+
+    #[test]
+    fn a_menu_no_package_declares_is_served_by_none() {
+        assert_eq!(serving_package("context-menu-rs-test-no-package"), None);
     }
 
     #[test]
