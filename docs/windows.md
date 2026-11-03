@@ -24,7 +24,7 @@ When Explorer loads it, the library finds its own name, and so its menu. Each ti
 
 What the menu shows:
 
-- **One entry**, as Windows 11's menu takes one per app: a submenu with the menu's title and its items, or, for a menu of one item and no submenu, that item. Windows asks whether the entry has a submenu before anything is chosen, so it cannot depend on what is.
+- **One entry**, as Windows 11's menu takes one per app: a submenu with the menu's title and its items, or, for a menu of one item and no submenu, that item. Windows asks whether the entry has a submenu before anything is chosen, so it cannot depend on what is. A package declaring more commands would not make more entries: Windows groups a package's commands under one entry named after the package (tried on build 26300), so items at the top level would take a package each. `context_menu::windows::serving_package(id)` says when a package serves the menu, so an app can tell its users that its items are in one entry, whatever `Menu::submenu` says.
 - **Each item for what it applies to**, all of it, as on Linux (`AppliesTo::accepts`): `Count::One` and `Count::Many` count what is chosen, `tar.gz` is told from `gz`, and with a zip and a folder chosen, an item for archives does not show. The entry shows when any of its items does.
 - **One run with every path**: the program, its arguments, and the paths chosen, started in the first one's folder.
 - **Icons**, the menu's and the items', when they are an `.ico`, or an `.exe` or `.dll` with an index.

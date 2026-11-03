@@ -80,7 +80,7 @@ fn open_full(path: &str) -> Option<RegKey> {
 
 /// The package that serves the menu `id` with the native extension, when
 /// one declaring its class is registered for the user.
-fn package(id: &str, root: &Root) -> Option<String> {
+pub(super) fn package(id: &str, root: &Root) -> Option<String> {
     let declaring = open_full(&format!(r"{}\{{{}}}", root.class_index, clsid(id)))?;
     let registered = open_full(&root.user_packages)?;
     declaring
